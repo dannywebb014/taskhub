@@ -265,7 +265,6 @@ function stopListening() {
 if (SpeechRec) {
   $("mic-row").hidden = false;
   $("mic").addEventListener("click", () => (listening ? stopListening() : startListening()));
-  $("hint").innerHTML = "Tap <b>Start speaking</b> and say your tasks, pausing between each one. Or tap the box and use the keyboard’s microphone.";
   // Only when the microphone has already been allowed: browsers will not let
   // a page start listening on its own the first time.
   if (settings.autoListen !== false) {
@@ -281,7 +280,10 @@ if (SpeechRec) {
 // updating tasks is free, so this refreshes on load and after adding.
 
 const SCOPES = ["active", "upcoming", "inbox"];
-let craftTasks = [];   // { id, text, date, spaceId }
+let craftTasks = [];   // { id, text, date, spaceId, where }
+const openSections = (() => {
+  try { return JSON.parse(localStorage.getItem("tasks.sections") || "{}"); } catch { return {}; }
+})();
 let loadingTasks = false;
 
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
@@ -367,62 +369,61 @@ function renderCraftTasks() {
   const title = $("craft-title");
   const ready = SPACES.some(s => isConfigured(s.id));
   $("refresh").hidden = !ready;
+  $("craft-head").hidden = !ready && !craftTasks.length;
+  title.textContent = "";
   if (!ready) {
-    title.textContent = "In Craft";
     box.innerHTML = `<p class="empty">Set up a Craft connection to see your tasks here.</p>`;
     return;
   }
   if (loadingTasks && !craftTasks.length) {
-    title.textContent = "In Craft";
     box.innerHTML = `<p class="loading">Loading your tasks…</p>`;
     return;
   }
-  const late = craftTasks.filter(isLate).length;
-  title.textContent = craftTasks.length
-    ? `In Craft · ${craftTasks.length}${late ? ` · ${late} overdue` : ""}`
-    : "In Craft";
   if (!craftTasks.length) {
     box.innerHTML = `<p class="empty">Nothing to do. Either you’re all caught up, or everything is scheduled further ahead.</p>`;
     return;
   }
-  box.replaceChildren();
-  for (const space of SPACES) {
-    const mine = craftTasks.filter(t => t.spaceId === space.id);
-    if (!mine.length) continue;
-    const head = document.createElement("div");
-    head.className = `space-head ${space.id}`;
-    head.innerHTML = `<span class="dot"></span>${esc(space.label)} <span class="n">${mine.length}</span>`;
-    box.append(head);
+  // Anything overdue belongs with today: it still needs doing today.
+  const due = (t) => { const d = dayDiff(t.date); return d !== null && d <= 0; };
+  box.replaceChildren(
+    fold("today", "today", craftTasks.filter(due)),
+    fold("upcoming", "upcoming", craftTasks.filter(t => !due(t))),
+  );
+}
 
-    // One block per document, with the soonest task first inside each.
-    const docs = new Map();
-    for (const task of mine) {
-      if (!docs.has(task.where.key)) docs.set(task.where.key, { where: task.where, tasks: [] });
-      docs.get(task.where.key).tasks.push(task);
-    }
-    const blocks = [...docs.values()].sort((a, b) =>
-      a.where.rank - b.where.rank ||
-      (b.where.date || "").localeCompare(a.where.date || "") ||
-      a.where.label.localeCompare(b.where.label));
-    for (const block of blocks) {
-      const label = document.createElement("div");
-      label.className = "group-label";
-      label.textContent = block.where.label;
-      box.append(label);
-      block.tasks
-        .sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999") || a.text.localeCompare(b.text))
-        .forEach(task => box.append(taskRow(task)));
-    }
-  }
+// My space first, then work; within each, soonest first and undated last.
+const inOrder = (list) => [...list].sort((a, b) =>
+  SPACES.findIndex(s => s.id === a.spaceId) - SPACES.findIndex(s => s.id === b.spaceId) ||
+  (a.date || "9999").localeCompare(b.date || "9999") ||
+  a.text.localeCompare(b.text));
+
+function fold(key, label, list) {
+  const wrap = document.createElement("section");
+  const closed = openSections[key] === false || (!list.length && openSections[key] !== true);
+  wrap.className = `fold${closed ? " closed" : ""}`;
+  wrap.innerHTML = `<button class="fold-head"><span class="fold-name">${esc(label)}<span class="dot">.</span></span>
+      <span class="n">${list.length}</span>
+      <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button><div class="fold-body"></div>`;
+  const body = wrap.querySelector(".fold-body");
+  if (!list.length) body.innerHTML = `<p class="empty">Nothing here.</p>`;
+  else inOrder(list).forEach(task => body.append(taskRow(task)));
+  wrap.querySelector(".fold-head").onclick = () => {
+    openSections[key] = !wrap.classList.toggle("closed");
+    try { localStorage.setItem("tasks.sections", JSON.stringify(openSections)); } catch { /* private mode */ }
+  };
+  return wrap;
 }
 
 function taskRow(task) {
   const row = document.createElement("div");
   row.className = "t-row";
   row.innerHTML = `<button class="tick" aria-label="Tick off"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
-    <div class="t-body"><div class="t-text"></div>
-      ${task.date ? `<div class="t-meta"><span class="t-date${isLate(task) ? " late" : ""}">${esc(dateText(task.date))}</span></div>` : ""}
-    </div>`;
+    <div class="t-body"><div class="t-text"></div><div class="t-meta">
+      <span class="t-space ${task.spaceId}"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</span>
+      ${task.date ? `<span class="t-date${isLate(task) ? " late" : ""}">${esc(dateText(task.date))}</span>` : ""}
+      <span class="t-doc">${esc(task.where.label)}</span>
+    </div></div>`;
   row.querySelector(".t-text").textContent = task.text || "(no text)";
   row.querySelector(".tick").onclick = () => completeTask(task, row);
   return row;
