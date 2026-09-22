@@ -21,8 +21,8 @@
 // without a pause after it, "work" is far more often a verb.
 
 export const SPACES = [
-  { id: "my", label: "My space", pattern: "my\\s*space|personal" },
-  { id: "work", label: "Work", pattern: "work" },
+  { id: "my", label: "my space.", pattern: "my\\s*space|personal" },
+  { id: "work", label: "work.", pattern: "work" },
 ];
 
 const spaceFor = (word) => {
