@@ -20,14 +20,21 @@ function saveSettings(s) {
 }
 let settings = loadSettings();
 
-// Accepts the URL as Craft shows it, with or without /api/v1 or a trailing
-// slash, so a slightly different paste still works.
+// Only the link ID matters, so anything around it in a paste (a missing
+// /api/v1, a trailing slash, a path copied from the docs) is ignored.
 function apiBase(url) {
-  const u = String(url || "").trim().replace(/\/+$/, "");
-  if (!u) return "";
-  return /\/api\/v\d+$/.test(u) ? u : `${u}/api/v1`;
+  const u = String(url || "").trim();
+  const m = u.match(/^(?:https?:\/\/)?(connect\.craft\.do\/links\/[^/?#\s]+)/i);
+  return m ? `https://${m[1]}/api/v1` : u.replace(/\/+$/, "");
 }
 const isConfigured = (id) => Boolean(settings.spaces[id]?.url);
+// The Craft space ID from the last test is kept only while the URL is unchanged.
+function withConfig(id, url, key) {
+  const prev = settings.spaces[id] || {};
+  const next = { url: url.trim(), key: key.trim() };
+  if (prev.spaceUuid && prev.url === next.url) next.spaceUuid = prev.spaceUuid;
+  return next;
+}
 
 async function craft(spaceId, path, options = {}) {
   const { url, key } = settings.spaces[spaceId] || {};
@@ -38,7 +45,9 @@ async function craft(spaceId, path, options = {}) {
     const body = await resp.text().catch(() => "");
     let detail = body;
     try { detail = JSON.parse(body).error || JSON.parse(body).message || body; } catch { /* not JSON */ }
-    throw new Error(`${resp.status}${detail ? ` — ${String(detail).slice(0, 140)}` : ""}`);
+    const err = new Error(`${resp.status}${detail ? ` — ${String(detail).slice(0, 140)}` : ""}`);
+    err.status = resp.status;
+    throw err;
   }
   return resp.json();
 }
@@ -186,6 +195,37 @@ sendBtn.addEventListener("click", async () => {
 });
 
 // ─── Settings dialog ─────────────────────────────────────────────────
+// Craft has three kinds of API connection and only two can manage tasks:
+// "All Documents" and "Daily Notes and Tasks". "Selected Documents" answers
+// 404 on /tasks, so a 404 is checked against /connection, which every kind
+// has, to tell a wrong kind of connection apart from a wrong URL.
+async function testConnection(spaceId) {
+  let info;
+  try {
+    info = await craft(spaceId, "/connection");
+  } catch (err) {
+    if (err instanceof TypeError) return { ok: false, message: "Couldn’t reach Craft. Check the URL." };
+    if (err.status === 401 || err.status === 403) return { ok: false, message: "Craft needs the API key for this connection, or the key is wrong." };
+    if (err.status === 404) return { ok: false, message: "Craft doesn’t recognise this URL. Copy the API URL from Craft again." };
+    // /connection is marked experimental by Craft; if it has changed, fall
+    // through and let the tasks check decide.
+  }
+  try {
+    const data = await craft(spaceId, "/tasks?scope=inbox");
+    const count = data.items?.length ?? 0;
+    settings.spaces[spaceId].spaceUuid = info?.space?.id;
+    saveSettings(settings);
+    const other = SPACES.find(s => s.id !== spaceId && info?.space?.id && settings.spaces[s.id]?.spaceUuid === info.space.id);
+    if (other) return { ok: false, message: `Connected, but this is the same Craft space as ${other.label}.` };
+    return { ok: true, message: `Connected · ${count} task${count === 1 ? "" : "s"} in the inbox` };
+  } catch (err) {
+    if (err instanceof TypeError) return { ok: false, message: "Couldn’t reach Craft. Check the URL." };
+    if (err.status === 404 && info) return { ok: false, message: "This connection can’t add tasks. In Craft’s Imagine tab, create an “All Documents” or “Daily Notes and Tasks” connection instead of “Selected Documents”." };
+    if (err.status === 401 || err.status === 403) return { ok: false, message: "Craft needs the API key for this connection, or the key is wrong." };
+    return { ok: false, message: `Failed: ${err.message}` };
+  }
+}
+
 const dialog = $("settings");
 
 function openSettings() {
@@ -207,7 +247,7 @@ function openSettings() {
     url.value = cfg.url || "";
     key.value = cfg.key || "";
     const store = () => {
-      settings.spaces[s.id] = { url: url.value.trim(), key: key.value.trim() };
+      settings.spaces[s.id] = withConfig(s.id, url.value, key.value);
       saveSettings(settings);
     };
     url.addEventListener("change", store);
@@ -217,15 +257,9 @@ function openSettings() {
       store();
       if (!url.value.trim()) { result.className = "test-result err"; result.textContent = "Paste the URL first"; return; }
       result.className = "test-result"; result.textContent = "Checking…";
-      try {
-        const data = await craft(s.id, "/tasks?scope=inbox");
-        const count = data.items?.length ?? 0;
-        result.className = "test-result ok";
-        result.textContent = `Connected · ${count} task${count === 1 ? "" : "s"} in the inbox`;
-      } catch (err) {
-        result.className = "test-result err";
-        result.textContent = err instanceof TypeError ? "Couldn’t reach Craft — check the URL" : `Failed: ${err.message}`;
-      }
+      const { ok, message } = await testConnection(s.id);
+      result.className = `test-result ${ok ? "ok" : "err"}`;
+      result.textContent = message;
     });
     return box;
   }));
@@ -240,10 +274,7 @@ dialog.addEventListener("close", () => {
   // Pick up anything typed without leaving the field.
   dialog.querySelectorAll(".space-box").forEach((box, i) => {
     const id = SPACES[i].id;
-    settings.spaces[id] = {
-      url: box.querySelector("[data-k=url]").value.trim(),
-      key: box.querySelector("[data-k=key]").value.trim(),
-    };
+    settings.spaces[id] = withConfig(id, box.querySelector("[data-k=url]").value, box.querySelector("[data-k=key]").value);
   });
   saveSettings(settings);
   render();
