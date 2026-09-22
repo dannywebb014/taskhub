@@ -280,6 +280,11 @@ if (SpeechRec) {
 // updating tasks is free, so this refreshes on load and after adding.
 
 const SCOPES = ["active", "upcoming", "inbox"];
+// A "Daily Notes and Tasks" connection can read tasks from anywhere but can
+// only change the ones in the inbox and daily notes; Craft answers
+// "document not in scope" for the rest. Such a connection has no /documents
+// endpoint, which is how this tells the two apart.
+const canEditDocs = {};
 let craftTasks = [];   // { id, text, date, spaceId, where }
 const openSections = (() => {
   try { return JSON.parse(localStorage.getItem("tasks.sections") || "{}"); } catch { return {}; }
@@ -320,6 +325,9 @@ async function loadCraftTasks() {
   const found = new Map();
   const failed = [];
   await Promise.all(spaces.map(async (space) => {
+    craft(space.id, "/documents?limit=1")
+      .then(() => { canEditDocs[space.id] = true; })
+      .catch(err => { if (err.status === 404) canEditDocs[space.id] = false; });
     try {
       const lists = await Promise.all(SCOPES.map(scope => craft(space.id, `/tasks?scope=${scope}`)));
       for (const list of lists) {
@@ -360,9 +368,14 @@ async function completeTask(task, row) {
   } catch (err) {
     console.error("Completing task failed:", err);
     row.classList.remove("done");
-    toast(err instanceof TypeError ? "Couldn’t reach Craft" : `Couldn’t tick that off: ${err.message}`, "err");
+    toast(err instanceof TypeError ? "Couldn’t reach Craft"
+      : /scope/i.test(err.message) ? scopeHelp(task.spaceId)
+      : `Couldn’t tick that off: ${err.message}`, "err");
   }
 }
+
+const scopeHelp = (spaceId) =>
+  `This task is inside a document, and the ${spaceLabel(spaceId)} connection can only change tasks in the inbox and daily notes. In Craft, create an “All Documents” connection for that space and paste its URL in the settings.`;
 
 function renderCraftTasks() {
   const box = $("craft-tasks");
@@ -425,7 +438,9 @@ function taskRow(task) {
       <span class="t-doc">${esc(task.where.label)}</span>
     </div></div>`;
   row.querySelector(".t-text").textContent = task.text || "(no text)";
-  row.querySelector(".tick").onclick = () => completeTask(task, row);
+  const locked = task.where.rank === 2 && canEditDocs[task.spaceId] === false;
+  row.classList.toggle("locked", locked);
+  row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);
   return row;
 }
 
