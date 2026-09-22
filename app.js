@@ -6,6 +6,7 @@ import { parseTasks, SPACES } from "./parse.js";
 // space. It is kept in this browser only, never in the repo.
 const STORE_KEY = "tasks.settings";
 const SPACE_COLOUR = { my: "var(--accent)", work: "var(--work)" };
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function loadSettings() {
   try {
@@ -76,15 +77,17 @@ function dateLabel(iso) {
 
 function render() {
   const n = tasks.length;
+  // The review list and the Add button only appear once something has been
+  // dictated, so the Craft list below has the screen to itself until then.
+  $("review-head").hidden = !n;
+  $("tasks").hidden = !n;
+  document.querySelector(".send-bar").hidden = !n;
   $("clear").hidden = !n && !dictation.value;
   $("review-title").textContent = n ? `${n} task${n === 1 ? "" : "s"}` : "Tasks";
   sendBtn.disabled = !n || tasks.some(t => !t.text.trim());
   sendBtn.textContent = n ? `Add ${n} task${n === 1 ? "" : "s"} to Craft` : "Add to Craft";
 
-  if (!n) {
-    list.innerHTML = `<p class="empty">Your tasks will appear here to check before they’re added.</p>`;
-    return;
-  }
+  if (!n) return;
   list.replaceChildren(...tasks.map((t, i) => {
     const el = document.createElement("div");
     el.className = "task";
@@ -182,6 +185,7 @@ sendBtn.addEventListener("click", async () => {
   }
 
   tasks = failed.flatMap(f => f.group);
+  if (added) loadCraftTasks();
   // Once anything has gone through, re-reading the dictation would bring those
   // tasks back and add them twice, so it is cleared; failures stay in the list.
   if (added) dictation.value = "";
@@ -193,6 +197,142 @@ sendBtn.addEventListener("click", async () => {
   }
   render();
 });
+
+// ─── Tasks already in Craft ──────────────────────────────────────────
+// Both spaces at once: what is scheduled for today or earlier, what is
+// coming up, and anything sitting in the inbox without a date. Reading and
+// updating tasks is free, so this refreshes on load and after adding.
+
+const SCOPES = ["active", "upcoming", "inbox"];
+let craftTasks = [];   // { id, text, date, spaceId }
+let loadingTasks = false;
+
+const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+const dayDiff = (iso) => {
+  if (!iso) return null;
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return Math.round((new Date(y, m - 1, d) - startOfToday()) / 86400000);
+};
+function dateText(iso) {
+  const days = dayDiff(iso);
+  if (days === null) return "";
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days === -1) return "Yesterday";
+  const date = new Date(iso.slice(0, 10) + "T12:00");
+  const opts = { weekday: "short", day: "numeric", month: "short" };
+  if (date.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return `${days < -1 ? "" : ""}${date.toLocaleDateString("en-GB", opts)}`;
+}
+// Overdue, today and undated tasks are the ones worth acting on, so they sort
+// to the top; everything else follows in date order.
+const groupOf = (t) => {
+  const days = dayDiff(t.date);
+  if (days === null) return { key: "none", label: "No date", order: 3 };
+  if (days < 0) return { key: "late", label: "Overdue", order: 0 };
+  if (days === 0) return { key: "today", label: "Today", order: 1 };
+  return { key: "later", label: "Coming up", order: 2 };
+};
+
+async function loadCraftTasks() {
+  const spaces = SPACES.filter(s => isConfigured(s.id));
+  if (!spaces.length) { craftTasks = []; renderCraftTasks(); return; }
+  loadingTasks = true;
+  renderCraftTasks();
+  const found = new Map();
+  const failed = [];
+  await Promise.all(spaces.map(async (space) => {
+    try {
+      const lists = await Promise.all(SCOPES.map(scope => craft(space.id, `/tasks?scope=${scope}`)));
+      for (const list of lists) {
+        for (const item of list.items || []) {
+          if (item.taskInfo?.state !== "todo") continue;
+          found.set(item.id, {
+            id: item.id,
+            text: (item.markdown || "").replace(/^\s*[-*]\s*\[[ x]\]\s*/, "").trim(),
+            date: item.taskInfo?.scheduleDate || null,
+            spaceId: space.id,
+          });
+        }
+      }
+    } catch (err) {
+      console.error(`Loading ${spaceLabel(space.id)} tasks failed:`, err);
+      failed.push(spaceLabel(space.id));
+    }
+  }));
+  craftTasks = [...found.values()];
+  loadingTasks = false;
+  renderCraftTasks();
+  if (failed.length) toast(`Couldn’t load tasks from ${failed.join(" and ")}`, "err");
+}
+
+async function completeTask(task, row) {
+  row.classList.add("done");
+  try {
+    await craft(task.spaceId, "/tasks", {
+      method: "PUT",
+      body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { state: "done" } }] }),
+    });
+    // Leave it ticked for a moment so the change is visible, then drop it.
+    setTimeout(() => {
+      craftTasks = craftTasks.filter(t => t.id !== task.id);
+      renderCraftTasks();
+    }, 900);
+  } catch (err) {
+    console.error("Completing task failed:", err);
+    row.classList.remove("done");
+    toast(err instanceof TypeError ? "Couldn’t reach Craft" : `Couldn’t tick that off: ${err.message}`, "err");
+  }
+}
+
+function renderCraftTasks() {
+  const box = $("craft-tasks");
+  const title = $("craft-title");
+  $("refresh").hidden = !SPACES.some(s => isConfigured(s.id));
+  if (!SPACES.some(s => isConfigured(s.id))) {
+    title.textContent = "In Craft";
+    box.innerHTML = `<p class="empty">Set up a Craft connection to see your tasks here.</p>`;
+    return;
+  }
+  if (loadingTasks && !craftTasks.length) {
+    title.textContent = "In Craft";
+    box.innerHTML = `<p class="loading">Loading your tasks…</p>`;
+    return;
+  }
+  title.textContent = craftTasks.length ? `In Craft · ${craftTasks.length}` : "In Craft";
+  if (!craftTasks.length) {
+    box.innerHTML = `<p class="empty">Nothing to do. Either you’re all caught up, or everything is scheduled further ahead.</p>`;
+    return;
+  }
+  const sorted = [...craftTasks].sort((a, b) => {
+    const ga = groupOf(a), gb = groupOf(b);
+    return ga.order - gb.order || (a.date || "").localeCompare(b.date || "") || a.text.localeCompare(b.text);
+  });
+  box.replaceChildren();
+  let lastGroup = null;
+  for (const task of sorted) {
+    const group = groupOf(task);
+    if (group.key !== lastGroup) {
+      lastGroup = group.key;
+      const label = document.createElement("div");
+      label.className = `group-label${group.key === "late" ? " late" : ""}`;
+      label.textContent = group.label;
+      box.append(label);
+    }
+    const row = document.createElement("div");
+    row.className = "t-row";
+    row.innerHTML = `<button class="tick" aria-label="Tick off"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+      <div class="t-body"><div class="t-text"></div><div class="t-meta">
+        <span class="t-space ${task.spaceId}"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</span>
+        ${task.date ? `<span class="t-date${group.key === "late" ? " late" : ""}">${esc(dateText(task.date))}</span>` : ""}
+      </div></div>`;
+    row.querySelector(".t-text").textContent = task.text || "(no text)";
+    row.querySelector(".tick").onclick = () => completeTask(task, row);
+    box.append(row);
+  }
+}
+
+$("refresh").addEventListener("click", loadCraftTasks);
 
 // ─── Settings dialog ─────────────────────────────────────────────────
 // Craft has three kinds of API connection and only two can manage tasks:
@@ -278,7 +418,9 @@ dialog.addEventListener("close", () => {
   });
   saveSettings(settings);
   render();
+  loadCraftTasks();
 });
 
 render();
+loadCraftTasks();
 if (!SPACES.some(s => isConfigured(s.id))) openSettings();
