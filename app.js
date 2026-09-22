@@ -11,9 +11,9 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<"
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-    return { spaces: s.spaces || {}, defaultSpace: s.defaultSpace || SPACES[0].id };
+    return { spaces: s.spaces || {}, defaultSpace: s.defaultSpace || SPACES[0].id, autoListen: s.autoListen !== false };
   } catch {
-    return { spaces: {}, defaultSpace: SPACES[0].id };
+    return { spaces: {}, defaultSpace: SPACES[0].id, autoListen: true };
   }
 }
 function saveSettings(s) {
@@ -127,12 +127,13 @@ function render() {
 // Re-read the dictation as it changes. Edits made in the list are kept until
 // the dictation itself is changed again.
 let parseTimer;
+function reparse() {
+  tasks = parseTasks(dictation.value, chrono, { defaultSpace: settings.defaultSpace });
+  render();
+}
 dictation.addEventListener("input", () => {
   clearTimeout(parseTimer);
-  parseTimer = setTimeout(() => {
-    tasks = parseTasks(dictation.value, chrono, { defaultSpace: settings.defaultSpace });
-    render();
-  }, 250);
+  parseTimer = setTimeout(reparse, 250);
 });
 
 $("clear").addEventListener("click", () => {
@@ -152,6 +153,7 @@ function toast(msg, kind = "ok") {
 }
 
 sendBtn.addEventListener("click", async () => {
+  stopListening();
   const missing = [...new Set(tasks.map(t => t.space))].filter(id => !isConfigured(id));
   if (missing.length) {
     toast(`Set up ${missing.map(spaceLabel).join(" and ")} first`, "err");
@@ -198,6 +200,81 @@ sendBtn.addEventListener("click", async () => {
   render();
 });
 
+
+// ─── Speaking straight into the page ─────────────────────────────────
+// The browser's own speech recognition, so there is a button to press
+// instead of reaching for the keyboard's microphone. It never punctuates,
+// so each finished phrase becomes its own line, which the parser treats as
+// one task. iOS ends a session after a pause, so it is restarted until the
+// button is pressed again.
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recogniser = null;
+let listening = false;
+
+function paintMic() {
+  $("mic").classList.toggle("on", listening);
+  $("mic-label").textContent = listening ? "Stop" : "Start speaking";
+  if (!listening) $("mic-said").textContent = "";
+}
+
+function startListening() {
+  if (!SpeechRec || listening) return;
+  recogniser = new SpeechRec();
+  recogniser.lang = "en-GB";
+  recogniser.continuous = true;
+  recogniser.interimResults = true;
+  recogniser.onresult = (event) => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const said = event.results[i][0].transcript.trim();
+      if (!said) continue;
+      if (event.results[i].isFinal) {
+        dictation.value = dictation.value.trimEnd() + (dictation.value.trim() ? "\n" : "") + said;
+        reparse();
+      } else {
+        interim = said;
+      }
+    }
+    $("mic-said").textContent = interim;
+  };
+  recogniser.onerror = (event) => {
+    if (event.error === "aborted" || event.error === "no-speech") return;
+    stopListening();
+    toast(event.error === "not-allowed"
+      ? "Microphone access is off. Turn it on for this site in Safari’s settings."
+      : `Speech didn’t work (${event.error}). Use the keyboard microphone instead.`, "err");
+  };
+  // A pause ends the session on iOS, so pick it straight back up.
+  recogniser.onend = () => { if (listening) { try { recogniser.start(); } catch { /* already going */ } } };
+  try {
+    recogniser.start();
+    listening = true;
+  } catch {
+    toast("Couldn’t start the microphone", "err");
+  }
+  paintMic();
+}
+
+function stopListening() {
+  listening = false;
+  try { recogniser?.stop(); } catch { /* already stopped */ }
+  paintMic();
+}
+
+if (SpeechRec) {
+  $("mic-row").hidden = false;
+  $("mic").addEventListener("click", () => (listening ? stopListening() : startListening()));
+  $("hint").innerHTML = "Tap <b>Start speaking</b> and say your tasks, pausing between each one. Or tap the box and use the keyboard’s microphone.";
+  // Only when the microphone has already been allowed: browsers will not let
+  // a page start listening on its own the first time.
+  if (settings.autoListen !== false) {
+    navigator.permissions?.query({ name: "microphone" })
+      .then(status => { if (status.state === "granted") startListening(); })
+      .catch(() => { /* Safari has no permissions API for this */ });
+  }
+}
+
 // ─── Tasks already in Craft ──────────────────────────────────────────
 // Both spaces at once: what is scheduled for today or earlier, what is
 // coming up, and anything sitting in the inbox without a date. Reading and
@@ -224,15 +301,14 @@ function dateText(iso) {
   if (date.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
   return `${days < -1 ? "" : ""}${date.toLocaleDateString("en-GB", opts)}`;
 }
-// Overdue, today and undated tasks are the ones worth acting on, so they sort
-// to the top; everything else follows in date order.
-const groupOf = (t) => {
-  const days = dayDiff(t.date);
-  if (days === null) return { key: "none", label: "No date", order: 3 };
-  if (days < 0) return { key: "late", label: "Overdue", order: 0 };
-  if (days === 0) return { key: "today", label: "Today", order: 1 };
-  return { key: "later", label: "Coming up", order: 2 };
-};
+// Where a task lives, which is how the list is grouped. Inbox first, then
+// daily notes newest first, then documents by name.
+function placeOf(location) {
+  if (location?.type === "document") return { key: `d:${location.title}`, label: location.title || "Untitled", rank: 2 };
+  if (location?.type === "dailyNote") return { key: `n:${location.date}`, label: `Daily note · ${dateText(location.date)}`, rank: 1, date: location.date };
+  return { key: "inbox", label: "Inbox", rank: 0 };
+}
+const isLate = (t) => { const d = dayDiff(t.date); return d !== null && d < 0; };
 
 async function loadCraftTasks() {
   const spaces = SPACES.filter(s => isConfigured(s.id));
@@ -252,6 +328,7 @@ async function loadCraftTasks() {
             text: (item.markdown || "").replace(/^\s*[-*]\s*\[[ x]\]\s*/, "").trim(),
             date: item.taskInfo?.scheduleDate || null,
             spaceId: space.id,
+            where: placeOf(item.location),
           });
         }
       }
@@ -288,8 +365,9 @@ async function completeTask(task, row) {
 function renderCraftTasks() {
   const box = $("craft-tasks");
   const title = $("craft-title");
-  $("refresh").hidden = !SPACES.some(s => isConfigured(s.id));
-  if (!SPACES.some(s => isConfigured(s.id))) {
+  const ready = SPACES.some(s => isConfigured(s.id));
+  $("refresh").hidden = !ready;
+  if (!ready) {
     title.textContent = "In Craft";
     box.innerHTML = `<p class="empty">Set up a Craft connection to see your tasks here.</p>`;
     return;
@@ -299,37 +377,55 @@ function renderCraftTasks() {
     box.innerHTML = `<p class="loading">Loading your tasks…</p>`;
     return;
   }
-  title.textContent = craftTasks.length ? `In Craft · ${craftTasks.length}` : "In Craft";
+  const late = craftTasks.filter(isLate).length;
+  title.textContent = craftTasks.length
+    ? `In Craft · ${craftTasks.length}${late ? ` · ${late} overdue` : ""}`
+    : "In Craft";
   if (!craftTasks.length) {
     box.innerHTML = `<p class="empty">Nothing to do. Either you’re all caught up, or everything is scheduled further ahead.</p>`;
     return;
   }
-  const sorted = [...craftTasks].sort((a, b) => {
-    const ga = groupOf(a), gb = groupOf(b);
-    return ga.order - gb.order || (a.date || "").localeCompare(b.date || "") || a.text.localeCompare(b.text);
-  });
   box.replaceChildren();
-  let lastGroup = null;
-  for (const task of sorted) {
-    const group = groupOf(task);
-    if (group.key !== lastGroup) {
-      lastGroup = group.key;
-      const label = document.createElement("div");
-      label.className = `group-label${group.key === "late" ? " late" : ""}`;
-      label.textContent = group.label;
-      box.append(label);
+  for (const space of SPACES) {
+    const mine = craftTasks.filter(t => t.spaceId === space.id);
+    if (!mine.length) continue;
+    const head = document.createElement("div");
+    head.className = `space-head ${space.id}`;
+    head.innerHTML = `<span class="dot"></span>${esc(space.label)} <span class="n">${mine.length}</span>`;
+    box.append(head);
+
+    // One block per document, with the soonest task first inside each.
+    const docs = new Map();
+    for (const task of mine) {
+      if (!docs.has(task.where.key)) docs.set(task.where.key, { where: task.where, tasks: [] });
+      docs.get(task.where.key).tasks.push(task);
     }
-    const row = document.createElement("div");
-    row.className = "t-row";
-    row.innerHTML = `<button class="tick" aria-label="Tick off"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
-      <div class="t-body"><div class="t-text"></div><div class="t-meta">
-        <span class="t-space ${task.spaceId}"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</span>
-        ${task.date ? `<span class="t-date${group.key === "late" ? " late" : ""}">${esc(dateText(task.date))}</span>` : ""}
-      </div></div>`;
-    row.querySelector(".t-text").textContent = task.text || "(no text)";
-    row.querySelector(".tick").onclick = () => completeTask(task, row);
-    box.append(row);
+    const blocks = [...docs.values()].sort((a, b) =>
+      a.where.rank - b.where.rank ||
+      (b.where.date || "").localeCompare(a.where.date || "") ||
+      a.where.label.localeCompare(b.where.label));
+    for (const block of blocks) {
+      const label = document.createElement("div");
+      label.className = "group-label";
+      label.textContent = block.where.label;
+      box.append(label);
+      block.tasks
+        .sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999") || a.text.localeCompare(b.text))
+        .forEach(task => box.append(taskRow(task)));
+    }
   }
+}
+
+function taskRow(task) {
+  const row = document.createElement("div");
+  row.className = "t-row";
+  row.innerHTML = `<button class="tick" aria-label="Tick off"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+    <div class="t-body"><div class="t-text"></div>
+      ${task.date ? `<div class="t-meta"><span class="t-date${isLate(task) ? " late" : ""}">${esc(dateText(task.date))}</span></div>` : ""}
+    </div>`;
+  row.querySelector(".t-text").textContent = task.text || "(no text)";
+  row.querySelector(".tick").onclick = () => completeTask(task, row);
+  return row;
 }
 
 $("refresh").addEventListener("click", loadCraftTasks);
@@ -403,6 +499,10 @@ function openSettings() {
     });
     return box;
   }));
+  const auto = $("auto-listen");
+  auto.checked = settings.autoListen !== false;
+  auto.disabled = !SpeechRec;
+  auto.onchange = () => { settings.autoListen = auto.checked; saveSettings(settings); };
   const sel = $("default-space");
   sel.replaceChildren(...SPACES.map(s => new Option(s.label, s.id, false, s.id === settings.defaultSpace)));
   sel.onchange = () => { settings.defaultSpace = sel.value; saveSettings(settings); };
