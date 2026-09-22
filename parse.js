@@ -8,17 +8,19 @@
 //
 // Rules, in order:
 //   - Each sentence (or line) is one task.
-//   - A sentence that starts with a workspace name followed by a pause
-//     ("Work, ..." / "My space: ..." / "Work tasks ...") switches workspace
-//     for it and every task after it, until another one is named.
-//   - A sentence that is only a workspace name ("Work.") just switches.
+//   - Each sentence (or line) is one task. "My space" in the middle of a
+//     sentence also starts a new task, since dictation often runs tasks
+//     together without a full stop.
+//   - A sentence that starts with a workspace name ("Work check emails",
+//     "My space, book the dentist", "Work.") switches workspace for it and
+//     every task after it, until another one is named. Dictation rarely
+//     puts a comma after it, so none is needed.
+//   - "Work on / out / through ..." still switches to Work, but keeps the
+//     words as the task, since there "work" is part of what to do.
 //   - A task ending in "for work" / "in my space" goes there on its own,
 //     without changing the workspace of the tasks after it.
 //   - The first date phrase in a task becomes its schedule date and is
 //     removed from the text.
-//
-// "Work on the report" is deliberately NOT treated as a workspace switch:
-// without a pause after it, "work" is far more often a verb.
 
 export const SPACES = [
   { id: "my", label: "my space.", pattern: "my\\s*space|personal" },
@@ -32,10 +34,13 @@ const spaceFor = (word) => {
 
 const ANY_SPACE = SPACES.map(s => s.pattern).join("|");
 const PREP = "(?:in|for|to|into|on)\\s+";
-// "Work, ...", "In my space: ...", "Work." on its own
-const LEAD_PAUSE = new RegExp(`^(?:${PREP})?(${ANY_SPACE})(?:\\s+(?:tasks?|space))?\\s*(?:[,:;.\\-–—]+\\s*|$)`, "i");
-// "Work task send the invoice", "My space tasks ..." — no pause needed
-const LEAD_TASK = new RegExp(`^(?:${PREP})?(${ANY_SPACE})\\s+tasks?\\b[,:;.\\-–—]*\\s*`, "i");
+// "Work check emails", "Work, ...", "In my space: ...", "Work task ...", "Work."
+const LEAD = new RegExp(`^(?:${PREP})?(${ANY_SPACE})\\b(?:\\s+(?:tasks?|space)\\b)?[\\s,:;.\\-–—]*`, "i");
+// After a leading "work", these mean "work" is the task's own verb.
+const WORK_AS_VERB = /^(?:on|out|through)\b/i;
+// "... my space buy milk": a new task starts at "my space" unless it is the
+// end of "for my space" / "in my space".
+const MID_SPLIT = /(?<!\b(?:in|for|to|into|on))\s+(?=my\s*space\b)/i;
 // "... for work", "... in my space"
 const TRAIL = new RegExp(`[\\s,]*\\b${PREP}(${ANY_SPACE})\\s*$`, "i");
 
@@ -66,6 +71,7 @@ function takeDate(text, chrono, now) {
 export function parseTasks(input, chrono, { now = new Date(), defaultSpace = SPACES[0].id } = {}) {
   const sentences = String(input ?? "")
     .split(/\n+|(?<=[.!?])\s+/)
+    .flatMap(s => s.split(MID_SPLIT))
     .map(s => s.trim())
     .filter(Boolean);
 
@@ -73,10 +79,12 @@ export function parseTasks(input, chrono, { now = new Date(), defaultSpace = SPA
   const tasks = [];
   for (let s of sentences) {
     s = s.replace(/[.!?]+$/, "");
-    const lead = s.match(LEAD_TASK) || s.match(LEAD_PAUSE);
+    const lead = s.match(LEAD);
     if (lead) {
       current = spaceFor(lead[1]);
-      s = s.slice(lead[0].length);
+      const rest = s.slice(lead[0].length);
+      const bare = !/[,:;.\-–—]/.test(lead[0]) && !/\btasks?\b/i.test(lead[0]);
+      if (!(current === "work" && bare && WORK_AS_VERB.test(rest))) s = rest;
     }
     let space = current;
     const trail = s.match(TRAIL);

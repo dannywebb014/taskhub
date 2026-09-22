@@ -6,7 +6,7 @@ Open the page, tap the text box, use the keyboard microphone, and say something 
 
 > Work. Send Sam the invoice on Friday. Chase the quote next Tuesday. My space. Book the dentist tomorrow.
 
-Each sentence becomes a task. Say **"Work"** or **"My space"** (or "personal") with a pause after it to switch space; it applies to the tasks that follow. Ending a task with "for work" or "in my space" moves just that one. The first date in a task becomes its schedule date. Check the list, then tap **Add**. Tasks go into each space's inbox.
+Each sentence becomes a task. Start with **"Work"** or **"My space"** (or "personal") to switch space, with or without a pause: "Work check emails tomorrow" works. The switch applies to the tasks that follow, and "my space" mid-sentence also starts a new task. "Work on…", "work out…" and "work through…" go to Work but keep those words in the task. Ending a task with "for work" or "in my space" moves just that one. The first date in a task becomes its schedule date. Check the list, then tap **Add**. Tasks go into each space's inbox.
 
 ## Setup
 
