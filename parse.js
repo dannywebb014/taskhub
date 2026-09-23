@@ -25,6 +25,8 @@
 export const SPACES = [
   { id: "my", label: "my space.", pattern: "my\\s*space|personal" },
   { id: "work", label: "work.", pattern: "work" },
+  // Shared lists in Todoist, for people who don't use Craft.
+  { id: "todoist", label: "joint.", pattern: "joint|shared" },
 ];
 
 const spaceFor = (word) => {

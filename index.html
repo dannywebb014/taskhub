@@ -20,7 +20,7 @@
     :root {
       --bg:#f4f1ea; --card:#fffdf8; --input:#f0ece3; --border:#ddd8cc; --border-light:#e8e3d8;
       --text:#2d2a24; --muted:#7a756a; --dim:#a8a295;
-      --accent:#2a7d77; --accent-hover:#1f6560; --accent-soft:#2a7d7714; --accent-text:#1f5f5c;
+      --accent:#2a7d77; --accent-hover:#1f6560; --accent-soft:#2a7d7714; --accent-text:#1f5f5c; --joint:#3f7a4a; --joint-soft:#3f7a4a14;
       --work:#a0672e; --work-soft:#a0672e14;
       --danger:#b54e4e; --danger-soft:#b54e4e12; --success:#4a7c4a; --success-soft:#4a7c4a14;
       --shadow:0 1px 3px rgba(0,0,0,.06);
@@ -29,7 +29,7 @@
       :root {
         --bg:#1a1d22; --card:#23272d; --input:#2c3139; --border:#3a4049; --border-light:#434a54;
         --text:#e6e8eb; --muted:#9aa2ad; --dim:#6b737e;
-        --accent:#2f8a84; --accent-hover:#3a9a93; --accent-soft:#4fa8a024; --accent-text:#8fd0c9;
+        --accent:#2f8a84; --accent-hover:#3a9a93; --accent-soft:#4fa8a024; --accent-text:#8fd0c9; --joint:#7cc48a; --joint-soft:#7cc48a1f;
         --work:#d99a5b; --work-soft:#d99a5b1f;
         --danger:#c96b6b; --danger-soft:#c96b6b1f; --success:#6bba6b; --success-soft:#6bba6b1f;
         --shadow:0 1px 3px rgba(0,0,0,.3);
@@ -97,6 +97,7 @@
     }
     .chip.space-my { color:var(--accent-text); background:var(--accent-soft); border-color:transparent; }
     .chip.space-work { color:var(--work); background:var(--work-soft); border-color:transparent; }
+    .chip.space-todoist { color:var(--joint); background:var(--joint-soft); border-color:transparent; }
     .chip.has-date { color:var(--text); }
     /* The real date input sits invisibly on top so iOS opens its own picker. */
     .chip input[type=date] { position:absolute; inset:0; opacity:0; width:100%; height:100%; border:none; }
@@ -132,6 +133,7 @@
     .space-head .dot { width:8px; height:8px; border-radius:50%; background:currentColor; }
     .space-head .n { margin-left:auto; font-family:'Source Sans 3',sans-serif; font-size:12px; font-weight:600; color:var(--textDim, var(--muted)); }
     .space-head.work { color:var(--work); }
+    .space-head.todoist { color:var(--joint); }
     .space-head.my { color:var(--accent-text); }
     .t-row { display:flex; align-items:flex-start; gap:11px; padding:9px 2px; border-bottom:1px solid var(--border); }
     .t-row:last-child { border-bottom:none; }
@@ -148,6 +150,7 @@
     .t-space { display:inline-flex; align-items:center; gap:5px; font-weight:600; }
     .t-space .dot { width:7px; height:7px; border-radius:50%; background:currentColor; }
     .t-space.work { color:var(--work); }
+    .t-space.todoist { color:var(--joint); }
     .t-space.my { color:var(--accent-text); }
     .t-date.late { color:var(--danger); font-weight:600; }
     .loading { color:var(--dim); font-size:14px; text-align:center; padding:14px 0; }
@@ -197,6 +200,7 @@
       font-size:14px; font-weight:600;
     }
     .test-result { font-size:13px; color:var(--muted); }
+    .note { font-size:12px; color:var(--muted); margin:6px 0 2px; line-height:1.35; }
     .test-result.ok { color:var(--success); }
     .test-result.err { color:var(--danger); }
     .dlg-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }

@@ -1,25 +1,29 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
 import { parseTasks, SPACES } from "./parse.js";
+import * as todoist from "./todoist.js";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
 // space. It is kept in this browser only, never in the repo.
 const STORE_KEY = "tasks.settings";
-const SPACE_COLOUR = { my: "var(--accent)", work: "var(--work)" };
+const SPACE_COLOUR = { my: "var(--accent)", work: "var(--work)", todoist: "var(--joint)" };
+const isTodoist = (id) => id === "todoist";
+let projects = [];   // Todoist projects, for naming and for routing new tasks
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-    return { spaces: s.spaces || {}, defaultSpace: s.defaultSpace || SPACES[0].id, autoListen: s.autoListen !== false };
+    return { spaces: s.spaces || {}, todoist: s.todoist || {}, defaultSpace: s.defaultSpace || SPACES[0].id, autoListen: s.autoListen !== false };
   } catch {
-    return { spaces: {}, defaultSpace: SPACES[0].id, autoListen: true };
+    return { spaces: {}, todoist: {}, defaultSpace: SPACES[0].id, autoListen: true };
   }
 }
 function saveSettings(s) {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch { /* private mode */ }
 }
 let settings = loadSettings();
+todoist.setToken(settings.todoist?.token);
 
 // Only the link ID matters, so anything around it in a paste (a missing
 // /api/v1, a trailing slash, a path copied from the docs) is ignored.
@@ -28,7 +32,7 @@ function apiBase(url) {
   const m = u.match(/^(?:https?:\/\/)?(connect\.craft\.do\/links\/[^/?#\s]+)/i);
   return m ? `https://${m[1]}/api/v1` : u.replace(/\/+$/, "");
 }
-const isConfigured = (id) => Boolean(settings.spaces[id]?.url);
+const isConfigured = (id) => isTodoist(id) ? Boolean(settings.todoist?.token) : Boolean(settings.spaces[id]?.url);
 // The Craft space ID from the last test is kept only while the URL is unchanged.
 function withConfig(id, url, key) {
   const prev = settings.spaces[id] || {};
@@ -85,7 +89,7 @@ function render() {
   $("clear").hidden = !n && !dictation.value;
   $("review-title").textContent = n ? `${n} task${n === 1 ? "" : "s"}` : "Tasks";
   sendBtn.disabled = !n || tasks.some(t => !t.text.trim());
-  sendBtn.textContent = n ? `Add ${n} task${n === 1 ? "" : "s"} to Craft` : "Add to Craft";
+  sendBtn.textContent = n ? `Add ${n} task${n === 1 ? "" : "s"}` : "Add";
 
   if (!n) return;
   list.replaceChildren(...tasks.map((t, i) => {
@@ -109,6 +113,12 @@ function render() {
     text.value = t.text;
     text.addEventListener("input", () => { t.text = text.value; sendBtn.disabled = tasks.some(x => !x.text.trim()); });
     el.querySelector("[data-act=space]").textContent = spaceLabel(t.space) + (isConfigured(t.space) ? "" : " · not set up");
+    if (isTodoist(t.space) && t.project) {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = t.project.name;
+      el.querySelector(".task-meta").append(chip);
+    }
     el.querySelector(".date-label").textContent = dateLabel(t.date);
     const picker = el.querySelector("input[type=date]");
     picker.value = t.date || "";
@@ -129,7 +139,21 @@ function render() {
 let parseTimer;
 function reparse() {
   tasks = parseTasks(dictation.value, chrono, { defaultSpace: settings.defaultSpace });
+  routeTodoist();
   render();
+}
+
+// A Todoist task can name its project first ("joint house fix the gate"), so
+// the project is split off here, before anything is shown, and the card then
+// shows exactly what will be sent.
+function routeTodoist() {
+  if (!projects.length) return;
+  for (const task of tasks) {
+    if (!isTodoist(task.space)) continue;
+    const { project, text } = todoist.pickProject(task.text, projects);
+    task.text = text;
+    task.project = project;
+  }
 }
 dictation.addEventListener("input", () => {
   clearTimeout(parseTimer);
@@ -170,19 +194,30 @@ sendBtn.addEventListener("click", async () => {
   const failed = [];
   let added = 0;
   for (const [spaceId, group] of bySpace) {
-    const body = {
-      tasks: group.map(t => ({
-        markdown: t.text.trim(),
-        location: { type: "inbox" },
-        ...(t.date ? { taskInfo: { scheduleDate: t.date } } : {}),
-      })),
-    };
     try {
-      await craft(spaceId, "/tasks", { method: "POST", body: JSON.stringify(body) });
+      if (isTodoist(spaceId)) {
+        // Todoist adds one task per call, each to the project named in the
+        // dictation or, failing that, the shared list.
+        for (const t of group) {
+          const project = t.project || todoist.pickProject(t.text.trim(), projects).project;
+          await todoist.addTask({ text: t.text.trim(), date: t.date, projectId: project?.id });
+        }
+      } else {
+        await craft(spaceId, "/tasks", {
+          method: "POST",
+          body: JSON.stringify({
+            tasks: group.map(t => ({
+              markdown: t.text.trim(),
+              location: { type: "inbox" },
+              ...(t.date ? { taskInfo: { scheduleDate: t.date } } : {}),
+            })),
+          }),
+        });
+      }
       added += group.length;
     } catch (err) {
       console.error(`Adding to ${spaceLabel(spaceId)} failed:`, err);
-      failed.push({ spaceId, group, message: err instanceof TypeError ? "couldn’t reach Craft" : err.message });
+      failed.push({ spaceId, group, message: err instanceof TypeError ? `couldn’t reach ${isTodoist(spaceId) ? "Todoist" : "Craft"}` : err.message });
     }
   }
 
@@ -192,7 +227,7 @@ sendBtn.addEventListener("click", async () => {
   // tasks back and add them twice, so it is cleared; failures stay in the list.
   if (added) dictation.value = "";
   if (!failed.length) {
-    toast(`Added ${added} task${added === 1 ? "" : "s"} to Craft`);
+    toast(`Added ${added} task${added === 1 ? "" : "s"}`);
   } else {
     const why = failed.map(f => `${spaceLabel(f.spaceId)}: ${f.message}`).join("; ");
     toast(`${added ? `Added ${added}, but ` : ""}couldn’t add to ${why}`, "err");
@@ -318,13 +353,13 @@ function placeOf(location) {
 const isLate = (t) => { const d = dayDiff(t.date); return d !== null && d < 0; };
 
 async function loadCraftTasks() {
-  const spaces = SPACES.filter(s => isConfigured(s.id));
+  const spaces = SPACES.filter(s => !isTodoist(s.id) && isConfigured(s.id));
   if (!spaces.length) { craftTasks = []; renderCraftTasks(); return; }
   loadingTasks = true;
   renderCraftTasks();
   const found = new Map();
   const failed = [];
-  await Promise.all(spaces.map(async (space) => {
+  const jobs = spaces.map(async (space) => {
     craft(space.id, "/documents?limit=1")
       .then(() => { canEditDocs[space.id] = true; })
       .catch(err => { if (err.status === 404) canEditDocs[space.id] = false; });
@@ -346,7 +381,21 @@ async function loadCraftTasks() {
       console.error(`Loading ${spaceLabel(space.id)} tasks failed:`, err);
       failed.push(spaceLabel(space.id));
     }
-  }));
+  });
+  if (isConfigured("todoist")) {
+    jobs.push((async () => {
+      try {
+        projects = await todoist.loadProjects();
+        for (const task of await todoist.loadTasks(projects)) found.set(task.id, task);
+      } catch (err) {
+        console.error("Loading Todoist tasks failed:", err);
+        failed.push("joint.");
+      }
+    })());
+  }
+  await Promise.all(jobs);
+  routeTodoist();
+  if (tasks.length) render();
   craftTasks = [...found.values()];
   loadingTasks = false;
   renderCraftTasks();
@@ -356,7 +405,8 @@ async function loadCraftTasks() {
 async function completeTask(task, row) {
   row.classList.add("done");
   try {
-    await craft(task.spaceId, "/tasks", {
+    if (isTodoist(task.spaceId)) await todoist.closeTask(task.id);
+    else await craft(task.spaceId, "/tasks", {
       method: "PUT",
       body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { state: "done" } }] }),
     });
@@ -368,7 +418,7 @@ async function completeTask(task, row) {
   } catch (err) {
     console.error("Completing task failed:", err);
     row.classList.remove("done");
-    toast(err instanceof TypeError ? "Couldn’t reach Craft"
+    toast(err instanceof TypeError ? "Couldn’t reach Craft or Todoist"
       : /scope/i.test(err.message) ? scopeHelp(task.spaceId)
       : `Couldn’t tick that off: ${err.message}`, "err");
   }
@@ -438,7 +488,7 @@ function taskRow(task) {
       <span class="t-doc">${esc(task.where.label)}</span>
     </div></div>`;
   row.querySelector(".t-text").textContent = task.text || "(no text)";
-  const locked = task.where.rank === 2 && canEditDocs[task.spaceId] === false;
+  const locked = !isTodoist(task.spaceId) && task.where.rank === 2 && canEditDocs[task.spaceId] === false;
   row.classList.toggle("locked", locked);
   row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);
   return row;
@@ -480,9 +530,45 @@ async function testConnection(spaceId) {
 
 const dialog = $("settings");
 
+function todoistBox(space) {
+  const box = document.createElement("div");
+  box.className = "space-box";
+  box.innerHTML = `
+    <h3><span class="dot" style="background:${SPACE_COLOUR[space.id]}"></span></h3>
+    <label class="f">Todoist API token</label>
+    <input class="field" data-k="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <p class="note">Todoist → Settings → Integrations → Developer → API token. Dictated tasks go to ${todoist.DEFAULT_PROJECT} unless you say another project's name first.</p>
+    <div class="row"><button type="button" class="btn">Test</button><span class="test-result"></span></div>`;
+  box.querySelector("h3").append(space.label);
+  const token = box.querySelector("[data-k=token]");
+  token.value = settings.todoist?.token || "";
+  const store = () => {
+    settings.todoist = { token: token.value.trim() };
+    todoist.setToken(settings.todoist.token);
+    saveSettings(settings);
+  };
+  token.addEventListener("change", store);
+  const result = box.querySelector(".test-result");
+  box.querySelector(".btn").addEventListener("click", async () => {
+    store();
+    if (!token.value.trim()) { result.className = "test-result err"; result.textContent = "Paste the token first"; return; }
+    result.className = "test-result"; result.textContent = "Checking…";
+    try {
+      projects = await todoist.loadProjects();
+      result.className = "test-result ok";
+      result.textContent = `Connected · ${projects.length} project${projects.length === 1 ? "" : "s"}`;
+    } catch (err) {
+      result.className = "test-result err";
+      result.textContent = err instanceof TypeError ? "Couldn’t reach Todoist" : err.message;
+    }
+  });
+  return box;
+}
+
 function openSettings() {
   const fields = $("space-fields");
   fields.replaceChildren(...SPACES.map(s => {
+    if (isTodoist(s.id)) return todoistBox(s);
     const cfg = settings.spaces[s.id] || {};
     const box = document.createElement("div");
     box.className = "space-box";
@@ -530,6 +616,12 @@ dialog.addEventListener("close", () => {
   // Pick up anything typed without leaving the field.
   dialog.querySelectorAll(".space-box").forEach((box, i) => {
     const id = SPACES[i].id;
+    const token = box.querySelector("[data-k=token]");
+    if (token) {
+      settings.todoist = { token: token.value.trim() };
+      todoist.setToken(settings.todoist.token);
+      return;
+    }
     settings.spaces[id] = withConfig(id, box.querySelector("[data-k=url]").value, box.querySelector("[data-k=key]").value);
   });
   saveSettings(settings);
