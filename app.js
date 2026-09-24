@@ -453,17 +453,22 @@ function renderCraftTasks() {
   const due = (t) => { const d = dayDiff(t.date); return d !== null && d <= 0; };
   box.replaceChildren(
     fold("today", "today", craftTasks.filter(due)),
-    fold("upcoming", "upcoming", craftTasks.filter(t => !due(t))),
+    fold("upcoming", "upcoming", craftTasks.filter(t => !due(t)), true),
   );
 }
 
-// My space first, then work; within each, soonest first and undated last.
-const inOrder = (list) => [...list].sort((a, b) =>
-  SPACES.findIndex(s => s.id === a.spaceId) - SPACES.findIndex(s => s.id === b.spaceId) ||
-  (a.date || "9999").localeCompare(b.date || "9999") ||
+const bySpaceOrder = (a, b) =>
+  SPACES.findIndex(s => s.id === a.spaceId) - SPACES.findIndex(s => s.id === b.spaceId);
+const byDate = (a, b) => (a.date || "9999").localeCompare(b.date || "9999");
+
+// today. is one day's worth, so it reads by space: my space., work., joint.
+// upcoming. spans days, so the date leads and each day then reads in that
+// same space order. Undated tasks sit at the end either way.
+const inOrder = (list, dateFirst) => [...list].sort((a, b) =>
+  (dateFirst ? byDate(a, b) || bySpaceOrder(a, b) : bySpaceOrder(a, b) || byDate(a, b)) ||
   a.text.localeCompare(b.text));
 
-function fold(key, label, list) {
+function fold(key, label, list, dateFirst = false) {
   const wrap = document.createElement("section");
   const closed = openSections[key] === false || (!list.length && openSections[key] !== true);
   wrap.className = `fold${closed ? " closed" : ""}`;
@@ -473,7 +478,7 @@ function fold(key, label, list) {
     </button><div class="fold-body"></div>`;
   const body = wrap.querySelector(".fold-body");
   if (!list.length) body.innerHTML = `<p class="empty">Nothing here.</p>`;
-  else inOrder(list).forEach(task => body.append(taskRow(task)));
+  else inOrder(list, dateFirst).forEach(task => body.append(taskRow(task)));
   wrap.querySelector(".fold-head").onclick = () => {
     openSections[key] = !wrap.classList.toggle("closed");
     try { localStorage.setItem("tasks.sections", JSON.stringify(openSections)); } catch { /* private mode */ }
