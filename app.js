@@ -559,7 +559,9 @@ function todoistBox(space) {
       result.textContent = `Connected · ${projects.length} project${projects.length === 1 ? "" : "s"}`;
     } catch (err) {
       result.className = "test-result err";
-      result.textContent = err instanceof TypeError ? "Couldn’t reach Todoist" : err.message;
+      // The underlying message matters here: a blocked request reads very
+      // differently from a refused one, and only the device shows which.
+      result.textContent = err instanceof TypeError ? `Couldn’t reach Todoist — ${err.name}: ${err.message}` : err.message;
     }
   });
   return box;
