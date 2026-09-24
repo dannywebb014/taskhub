@@ -14,9 +14,9 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<"
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-    return { spaces: s.spaces || {}, todoist: s.todoist || {}, defaultSpace: s.defaultSpace || SPACES[0].id, autoListen: s.autoListen !== false };
+    return { spaces: s.spaces || {}, todoist: s.todoist || {}, defaultSpace: s.defaultSpace || SPACES[0].id };
   } catch {
-    return { spaces: {}, todoist: {}, defaultSpace: SPACES[0].id, autoListen: true };
+    return { spaces: {}, todoist: {}, defaultSpace: SPACES[0].id };
   }
 }
 function saveSettings(s) {
@@ -303,13 +303,6 @@ function stopListening() {
 if (SpeechRec) {
   $("mic-row").hidden = false;
   $("mic").addEventListener("click", () => (listening ? stopListening() : startListening()));
-  // Only when the microphone has already been allowed: browsers will not let
-  // a page start listening on its own the first time.
-  if (settings.autoListen !== false) {
-    navigator.permissions?.query({ name: "microphone" })
-      .then(status => { if (status.state === "granted") startListening(); })
-      .catch(() => { /* Safari has no permissions API for this */ });
-  }
 }
 
 // ─── Tasks already in Craft ──────────────────────────────────────────
@@ -643,10 +636,6 @@ function openSettings() {
     });
     return box;
   }));
-  const auto = $("auto-listen");
-  auto.checked = settings.autoListen !== false;
-  auto.disabled = !SpeechRec;
-  auto.onchange = () => { settings.autoListen = auto.checked; saveSettings(settings); };
   const sel = $("default-space");
   sel.replaceChildren(...SPACES.map(s => new Option(s.label, s.id, false, s.id === settings.defaultSpace)));
   sel.onchange = () => { settings.defaultSpace = sel.value; saveSettings(settings); };
