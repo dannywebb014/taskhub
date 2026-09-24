@@ -405,6 +405,30 @@ async function loadCraftTasks() {
   if (failed.length) toast(`Couldn’t load tasks from ${failed.join(" and ")}`, "err");
 }
 
+// Craft and Todoist both take a plain YYYY-MM-DD. Neither offers a documented
+// way to clear a date, so this only ever sets one.
+async function reschedule(task, date, row) {
+  const was = task.date;
+  task.date = date;
+  row.querySelector(".when-text").textContent = dateText(date);
+  try {
+    if (isTodoist(task.spaceId)) await todoist.rescheduleTask(task.id, date);
+    else await craft(task.spaceId, "/tasks", {
+      method: "PUT",
+      body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { scheduleDate: date } }] }),
+    });
+    toast(`${task.text} → ${dateText(date)}`);
+    renderCraftTasks();
+  } catch (err) {
+    console.error("Changing the date failed:", err);
+    task.date = was;
+    renderCraftTasks();
+    toast(/scope/i.test(err.message)
+      ? scopeHelp(task.spaceId)
+      : err instanceof TypeError ? "Couldn’t reach Craft or Todoist" : `Couldn’t change the date: ${err.message}`, "err");
+  }
+}
+
 async function completeTask(task, row) {
   row.classList.add("done");
   try {
@@ -489,13 +513,21 @@ function fold(key, label, list, dateFirst = false) {
 function taskRow(task) {
   const row = document.createElement("div");
   row.className = "t-row";
+  // The date is a label wrapping a real date input, so tapping it opens the
+  // phone's own picker rather than a home-made one.
   row.innerHTML = `<button class="tick" aria-label="Tick off"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
     <div class="t-body"><div class="t-text"></div><div class="t-meta">
       <span class="t-space ${task.spaceId}"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</span>
-      ${task.date ? `<span class="t-date${isLate(task) ? " late" : ""}">${esc(dateText(task.date))}</span>` : ""}
+      <label class="t-when${isLate(task) ? " late" : ""}${task.date ? "" : " none"}">
+        <span class="when-text">${esc(task.date ? dateText(task.date) : "Set a date")}</span>
+        <input type="date" aria-label="Scheduled date">
+      </label>
       <span class="t-doc">${esc(task.where.label)}</span>
     </div></div>`;
   row.querySelector(".t-text").textContent = task.text || "(no text)";
+  const when = row.querySelector("input[type=date]");
+  when.value = task.date || "";
+  when.onchange = () => { if (when.value) reschedule(task, when.value, row); };
   const locked = !isTodoist(task.spaceId) && task.where.rank === 2 && canEditDocs[task.spaceId] === false;
   row.classList.toggle("locked", locked);
   row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);

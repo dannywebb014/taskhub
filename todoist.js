@@ -73,6 +73,9 @@ export async function loadTasks(projects) {
 
 export const closeTask = (id) => call(`/tasks/${id}/close`, { method: "POST" });
 
+export const rescheduleTask = (id, date) =>
+  call(`/tasks/${id}`, { method: "POST", body: JSON.stringify({ due_date: date }) });
+
 export const addTask = ({ text, date, projectId }) =>
   call("/tasks", {
     method: "POST",
