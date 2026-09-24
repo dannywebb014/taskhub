@@ -44,7 +44,10 @@ function withConfig(id, url, key) {
 async function craft(spaceId, path, options = {}) {
   const { url, key } = settings.spaces[spaceId] || {};
   const headers = { "Content-Type": "application/json", Accept: "application/json" };
-  if (key) headers.Authorization = `Bearer ${key}`;
+  // Same cleaning as the Todoist token: a pasted key can carry invisible
+  // characters that a header cannot hold.
+  const cleanKey = String(key || "").replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, "");
+  if (cleanKey) headers.Authorization = `Bearer ${cleanKey}`;
   const resp = await fetch(apiBase(url) + path, { ...options, headers });
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");

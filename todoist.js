@@ -11,10 +11,21 @@ const API = "https://api.todoist.com/api/v1";
 export const DEFAULT_PROJECT = "Joint Reminders";
 
 let token = "";
-export const setToken = (value) => { token = String(value || "").trim(); };
+// Copying a token on a phone often brings invisible characters with it — a
+// non-breaking space, a zero-width space, a stray newline — and a header
+// cannot carry those, so the request fails before it is sent. A token has no
+// spaces in it, so everything space-like is simply removed.
+export const setToken = (value) => {
+  token = String(value || "").replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, "");
+};
 export const hasToken = () => Boolean(token);
+// Headers are Latin-1 only; anything outside it would throw inside fetch.
+const oddCharacter = () => /[^\x20-\x7E]/.test(token);
 
 async function call(path, options = {}) {
+  if (oddCharacter()) {
+    throw new Error("That token has an unusual character in it. Copy it from Todoist again, or type it by hand.");
+  }
   const resp = await fetch(API + path, {
     ...options,
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...options.headers },
