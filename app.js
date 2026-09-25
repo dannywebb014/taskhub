@@ -250,6 +250,10 @@ sendBtn.addEventListener("click", async () => {
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recogniser = null;
 let listening = false;
+// Whether phrase a already holds phrase b: the same words, or b's words
+// followed by more. Case and punctuation don't count.
+const words = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const covers = (a, b) => words(a) === words(b) || words(a).startsWith(words(b) + " ");
 
 function paintMic() {
   $("mic").classList.toggle("on", listening);
@@ -263,17 +267,29 @@ function startListening() {
   recogniser.lang = "en-GB";
   recogniser.continuous = true;
   recogniser.interimResults = true;
+  // Chrome on Android re-sends earlier phrases as new final results, either
+  // repeated word for word or growing ("joint", "joint get", "joint get hand
+  // soap"). Appending each one made several copies of one task, so the
+  // session's text is rebuilt from all its results every time, with a
+  // phrase that repeats or extends the one before it replacing that one.
+  let before = "";
+  recogniser.onstart = () => { before = dictation.value.trimEnd(); };
   recogniser.onresult = (event) => {
+    const lines = [];
     let interim = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const said = event.results[i][0].transcript.trim();
+    for (const result of event.results) {
+      const said = result[0].transcript.trim();
       if (!said) continue;
-      if (event.results[i].isFinal) {
-        dictation.value = dictation.value.trimEnd() + (dictation.value.trim() ? "\n" : "") + said;
-        reparse();
-      } else {
-        interim = said;
-      }
+      if (!result.isFinal) { interim = said; continue; }
+      const last = lines.at(-1) ?? before.split("\n").at(-1).trim();
+      if (last && covers(last, said)) continue;
+      if (lines.length && covers(said, last)) lines[lines.length - 1] = said;
+      else lines.push(said);
+    }
+    const text = [before, ...lines].filter(Boolean).join("\n");
+    if (text !== dictation.value.trimEnd()) {
+      dictation.value = text;
+      reparse();
     }
     $("mic-said").textContent = interim;
   };
