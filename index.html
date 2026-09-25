@@ -45,7 +45,7 @@
     button, input, textarea, select { font:inherit; color:inherit; }
     button { cursor:pointer; }
     [hidden] { display:none !important; }
-    .wrap { max-width:560px; margin:0 auto; padding:16px 16px 120px; }
+    .wrap { max-width:560px; margin:0 auto; padding:16px 16px 40px; }
 
     header { display:flex; align-items:center; justify-content:space-between; margin:4px 0 18px; }
     .logo { font-family:'Lora',serif; font-weight:600; font-size:28px; letter-spacing:-.5px; margin:0; }
@@ -65,6 +65,10 @@
     .dictate::placeholder { color:var(--dim); }
     .hint { font-size:13px; color:var(--muted); margin:8px 2px 0; }
     .mic-row { display:flex; flex-direction:column; align-items:center; gap:6px; margin-top:14px; }
+    /* The Add button sits beside the mic, right under the text box, so it can
+       be pressed without closing the keyboard or scrolling. */
+    .actions { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; }
+    .actions .primary { flex:1; width:auto; height:44px; border-radius:22px; font-size:16px; }
     .mic {
       display:inline-flex; align-items:center; gap:8px; height:44px; padding:0 18px; border-radius:22px;
       border:1px solid var(--accent); background:var(--accent-soft); color:var(--accent-text);
@@ -159,11 +163,6 @@
     .t-date.late { color:var(--danger); font-weight:600; }
     .loading { color:var(--dim); font-size:14px; text-align:center; padding:14px 0; }
 
-    .send-bar {
-      position:fixed; left:0; right:0; bottom:0; padding:12px 16px calc(12px + env(safe-area-inset-bottom));
-      background:linear-gradient(to top, var(--bg) 70%, transparent); z-index:10;
-    }
-    .send-bar .inner { max-width:560px; margin:0 auto; }
     .primary {
       width:100%; height:52px; border:none; border-radius:14px; background:var(--accent); color:#fff;
       font-size:17px; font-weight:600; box-shadow:0 4px 14px rgba(0,0,0,.12);
@@ -222,12 +221,15 @@
 
     <textarea id="dictation" class="dictate" rows="5" autocapitalize="sentences"
       placeholder="Speak or type your tasks"></textarea>
-    <div class="mic-row" id="mic-row" hidden>
-      <button class="mic" id="mic">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
-        <span id="mic-label">Start speaking</span>
-      </button>
-      <span class="mic-said" id="mic-said"></span>
+    <div class="mic-row">
+      <div class="actions">
+        <button class="mic" id="mic" hidden>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+          <span id="mic-label">Start speaking</span>
+        </button>
+        <button class="primary" id="send" hidden disabled>Add</button>
+      </div>
+      <span class="mic-said" id="mic-said" hidden></span>
     </div>
 
 
@@ -243,10 +245,6 @@
     </div>
     <div id="craft-tasks"></div>
   </div>
-
-  <div class="send-bar"><div class="inner">
-    <button class="primary" id="send" disabled>Add to Craft</button>
-  </div></div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
@@ -265,6 +263,6 @@
 
   <!-- The version is bumped on each release so a phone holding the page in
        its cache still fetches the new code. -->
-  <script type="module" src="app.js?v=2"></script>
+  <script type="module" src="app.js?v=3"></script>
 </body>
 </html>

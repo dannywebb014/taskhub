@@ -88,7 +88,7 @@ function render() {
   // dictated, so the Craft list below has the screen to itself until then.
   $("review-head").hidden = !n;
   $("tasks").hidden = !n;
-  document.querySelector(".send-bar").hidden = !n;
+  sendBtn.hidden = !n;
   $("clear").hidden = !n && !dictation.value;
   $("review-title").textContent = n ? `${n} task${n === 1 ? "" : "s"}` : "Tasks";
   sendBtn.disabled = !n || tasks.some(t => !t.text.trim());
@@ -181,6 +181,7 @@ function toast(msg, kind = "ok") {
 
 sendBtn.addEventListener("click", async () => {
   stopListening();
+  dictation.blur();
   const missing = [...new Set(tasks.map(t => t.space))].filter(id => !isConfigured(id));
   if (missing.length) {
     toast(`Set up ${missing.map(spaceLabel).join(" and ")} first`, "err");
@@ -301,7 +302,8 @@ function stopListening() {
 }
 
 if (SpeechRec) {
-  $("mic-row").hidden = false;
+  $("mic").hidden = false;
+  $("mic-said").hidden = false;
   $("mic").addEventListener("click", () => (listening ? stopListening() : startListening()));
 }
 
