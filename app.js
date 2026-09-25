@@ -323,6 +323,11 @@ const openSections = (() => {
   try { return JSON.parse(localStorage.getItem("tasks.sections") || "{}"); } catch { return {}; }
 })();
 let loadingTasks = false;
+// Lists switched off in the filter. Kept as the ones hidden, so a list set up
+// later shows by default.
+const hiddenSpaces = new Set((() => {
+  try { return JSON.parse(localStorage.getItem("tasks.hidden") || "[]"); } catch { return []; }
+})());
 
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
 const dayDiff = (iso) => {
@@ -470,10 +475,35 @@ function renderCraftTasks() {
   }
   // Anything overdue belongs with today: it still needs doing today.
   const due = (t) => { const d = dayDiff(t.date); return d !== null && d <= 0; };
+  const spaces = SPACES.filter(s => isConfigured(s.id));
+  const shown = craftTasks.filter(t => spaces.length < 2 || !hiddenSpaces.has(t.spaceId));
+  if (spaces.length > 1) title.replaceChildren(filterRow(spaces));
   box.replaceChildren(
-    fold("today", "today", craftTasks.filter(due)),
-    fold("upcoming", "upcoming", craftTasks.filter(t => !due(t)), true),
+    fold("today", "today", shown.filter(due)),
+    fold("upcoming", "upcoming", shown.filter(t => !due(t)), true),
   );
+}
+
+// One chip per list, each switched on or off. The last one left on can't be
+// switched off, so there is always something to show.
+function filterRow(spaces) {
+  const row = document.createElement("div");
+  row.className = "filters";
+  for (const space of spaces) {
+    const on = !hiddenSpaces.has(space.id);
+    const chip = document.createElement("button");
+    chip.className = `chip filter${on ? ` space-${space.id}` : ""}`;
+    chip.setAttribute("aria-pressed", on);
+    chip.textContent = space.label;
+    chip.onclick = () => {
+      if (on && spaces.every(s => s.id === space.id || hiddenSpaces.has(s.id))) return;
+      if (on) hiddenSpaces.add(space.id); else hiddenSpaces.delete(space.id);
+      try { localStorage.setItem("tasks.hidden", JSON.stringify([...hiddenSpaces])); } catch { /* private mode */ }
+      renderCraftTasks();
+    };
+    row.append(chip);
+  }
+  return row;
 }
 
 const bySpaceOrder = (a, b) =>
