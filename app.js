@@ -1,6 +1,6 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
 import { parseTasks, SPACES } from "./parse.js";
-import * as todoist from "./todoist.js";
+import * as todoist from "./todoist.js?v=6";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -387,9 +387,12 @@ async function loadCraftTasks() {
       for (const list of lists) {
         for (const item of list.items || []) {
           if (item.taskInfo?.state !== "todo") continue;
+          const markdown = item.markdown || "";
           found.set(item.id, {
             id: item.id,
-            text: (item.markdown || "").replace(/^\s*[-*]\s*\[[ x]\]\s*/, "").trim(),
+            text: markdown.replace(/^\s*[-*]\s*\[[ x]\]\s*/, "").trim(),
+            // Any checkbox prefix Craft sent, so a rename goes back in the same shape.
+            prefix: (markdown.match(/^\s*[-*]\s*\[[ x]\]\s*/) || [""])[0],
             date: item.taskInfo?.scheduleDate || null,
             spaceId: space.id,
             where: placeOf(item.location),
@@ -465,6 +468,63 @@ async function completeTask(task, row) {
       : /scope/i.test(err.message) ? scopeHelp(task.spaceId)
       : `Couldn’t tick that off: ${err.message}`, "err");
   }
+}
+
+async function renameTask(task, text) {
+  const was = task.text;
+  if (!text || text === was) { renderCraftTasks(); return; }
+  task.text = text;
+  renderCraftTasks();
+  try {
+    if (isTodoist(task.spaceId)) await todoist.renameTask(task.id, text);
+    else await craft(task.spaceId, "/tasks", {
+      method: "PUT",
+      body: JSON.stringify({ tasksToUpdate: [{ id: task.id, markdown: (task.prefix || "") + text }] }),
+    });
+    toast("Renamed");
+  } catch (err) {
+    console.error("Renaming failed:", err);
+    task.text = was;
+    renderCraftTasks();
+    toast(err instanceof TypeError ? "Couldn’t reach Craft or Todoist"
+      : /scope/i.test(err.message) ? scopeHelp(task.spaceId)
+      : `Couldn’t rename it: ${err.message}`, "err");
+  }
+}
+
+// Tapping a task's text turns it into a box to rename it. Enter or tapping
+// away saves; Escape puts it back as it was. Only one is open at a time.
+let finishEdit = null;
+function editText(task, row) {
+  finishEdit?.(true);
+  const shown = row.querySelector(".t-text");
+  if (!shown || row.querySelector(".t-edit")) return;
+  const box = document.createElement("textarea");
+  box.className = "t-edit";
+  box.rows = 1;
+  box.value = task.text;
+  box.setAttribute("aria-label", "Task name");
+  box.setAttribute("enterkeyhint", "done");
+  const fit = () => { box.style.height = "auto"; box.style.height = box.scrollHeight + "px"; };
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    finishEdit = null;
+    if (save) renameTask(task, box.value.replace(/\s+/g, " ").trim());
+    else renderCraftTasks();
+  };
+  box.addEventListener("input", fit);
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  });
+  box.addEventListener("blur", () => finish(true));
+  finishEdit = finish;
+  shown.replaceWith(box);
+  fit();
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
 }
 
 const scopeHelp = (spaceId) =>
@@ -572,6 +632,7 @@ function taskRow(task) {
   const locked = !isTodoist(task.spaceId) && task.where.rank === 2 && canEditDocs[task.spaceId] === false;
   row.classList.toggle("locked", locked);
   row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);
+  row.querySelector(".t-text").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : editText(task, row);
   return row;
 }
 
