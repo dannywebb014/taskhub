@@ -16,6 +16,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://dannywebb014.github.io/lifeos/fonts.css">
+  <script type="module">
+    // One sign-in for every hub app (lifeos/auth.js): no verified session, off to /lifeos/signin/.
+    import { requireAuth } from "/lifeos/auth.js";
+    await requireAuth();
+  </script>
   <style>
     :root {
       --bg:#f4f1ea; --card:#fffdf8; --input:#f0ece3; --border:#ddd8cc; --border-light:#e8e3d8;
