@@ -15,7 +15,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Lora:wght@500;600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://dannywebb014.github.io/lifeos/fonts.css">
   <style>
     :root {
       --bg:#f4f1ea; --card:#fffdf8; --input:#f0ece3; --border:#ddd8cc; --border-light:#e8e3d8;
@@ -39,7 +39,7 @@
     html { -webkit-text-size-adjust:100%; }
     body {
       margin:0; background:var(--bg); color:var(--text);
-      font-family:'Source Sans 3',system-ui,sans-serif; font-size:16px; line-height:1.45;
+      font-family:var(--hub-body, 'Source Sans 3', system-ui, sans-serif); font-size:16px; line-height:1.45;
       padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
     }
     button, input, textarea, select { font:inherit; color:inherit; }
@@ -64,7 +64,7 @@
     .wrap { max-width:560px; margin:0 auto; padding:16px 16px 40px; }
 
     header { display:flex; align-items:center; justify-content:space-between; margin:4px 0 18px; }
-    .logo { font-family:'Lora',serif; font-weight:600; font-size:28px; letter-spacing:-.5px; margin:0; }
+    .logo { font-family:var(--hub-head, 'Lora', Georgia, serif); font-weight:600; font-size:28px; letter-spacing:-.5px; margin:0; }
     .logo span { color:var(--accent); }
     .icon-btn {
       width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:var(--card);
@@ -98,7 +98,7 @@
     .hint b { font-weight:600; color:var(--text); }
 
     .section-head { display:flex; justify-content:space-between; align-items:baseline; margin:26px 2px 10px; }
-    .section-head h2 { font-family:'Lora',serif; font-weight:500; font-size:18px; margin:0; }
+    .section-head h2 { font-family:var(--hub-head, 'Lora', Georgia, serif); font-weight:500; font-size:18px; margin:0; }
     .link-btn { background:none; border:none; color:var(--muted); font-size:14px; padding:4px 2px; }
 
     .task {
@@ -132,17 +132,17 @@
     #craft-head { margin:14px 2px -6px; }
     .filters { display:flex; flex-wrap:wrap; gap:6px; }
     #craft-head { align-items:center; }
-    .chip.filter { cursor:pointer; font-family:'Source Sans 3',system-ui,sans-serif; }
+    .chip.filter { cursor:pointer; font-family:var(--hub-body, 'Source Sans 3', system-ui, sans-serif); }
     .chip.filter[aria-pressed=false] { color:var(--dim); background:none; }
     .fold { margin-top:6px; }
     .fold-head {
       display:flex; align-items:center; gap:8px; width:100%; padding:10px 2px; border:none; background:none;
-      font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); letter-spacing:-.3px;
+      font-family:var(--hub-head, 'Lora', Georgia, serif); font-size:20px; font-weight:600; color:var(--text); letter-spacing:-.3px;
       border-bottom:1px solid var(--border);
     }
     .fold-head .fold-name { display:inline; }
     .fold-head .dot { color:var(--accent); }
-    .fold-head .n { font-family:'Source Sans 3',sans-serif; font-size:13px; font-weight:600; color:var(--muted); }
+    .fold-head .n { font-family:var(--hub-body, 'Source Sans 3', system-ui, sans-serif); font-size:13px; font-weight:600; color:var(--muted); }
     .fold-head .chev { margin-left:auto; color:var(--muted); transition:transform .2s; }
     .fold.closed .chev { transform:rotate(-90deg); }
     .fold.closed .fold-body { display:none; }
@@ -151,11 +151,11 @@
     .t-doc { color:var(--muted); }
     .t-doc::before { content:"· "; }
     .space-head {
-      display:flex; align-items:center; gap:7px; font-family:'Lora',serif; font-size:16px; font-weight:600;
+      display:flex; align-items:center; gap:7px; font-family:var(--hub-head, 'Lora', Georgia, serif); font-size:16px; font-weight:600;
       margin:18px 2px 2px; padding-bottom:6px; border-bottom:1px solid var(--border);
     }
     .space-head .dot { width:8px; height:8px; border-radius:50%; background:currentColor; }
-    .space-head .n { margin-left:auto; font-family:'Source Sans 3',sans-serif; font-size:12px; font-weight:600; color:var(--textDim, var(--muted)); }
+    .space-head .n { margin-left:auto; font-family:var(--hub-body, 'Source Sans 3', system-ui, sans-serif); font-size:12px; font-weight:600; color:var(--textDim, var(--muted)); }
     .space-head.work { color:var(--work); }
     .space-head.todoist { color:var(--joint); }
     .space-head.my { color:var(--accent-text); }
@@ -211,7 +211,7 @@
     }
     dialog::backdrop { background:rgba(0,0,0,.4); }
     .dlg { padding:18px 16px 16px; }
-    .dlg h2 { font-family:'Lora',serif; font-weight:600; font-size:21px; margin:0 0 4px; }
+    .dlg h2 { font-family:var(--hub-head, 'Lora', Georgia, serif); font-weight:600; font-size:21px; margin:0 0 4px; }
     .dlg p.sub { color:var(--muted); font-size:14px; margin:0 0 16px; }
     .space-box { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:12px; margin-bottom:12px; }
     .space-box h3 { margin:0 0 8px; font-size:15px; font-weight:700; display:flex; align-items:center; gap:8px; }
