@@ -66,6 +66,7 @@ export async function loadTasks(projects) {
       text: t.content || "",
       // A due date can carry a time; only the day matters here.
       date: (t.due?.date || "").slice(0, 10) || null,
+      recurring: Boolean(t.due?.is_recurring),
       spaceId: "todoist",
       where: { key: `p:${t.project_id}`, label: names.get(String(t.project_id)) || "Todoist", rank: 2 },
     }));

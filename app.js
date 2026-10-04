@@ -1,6 +1,6 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
 import { parseTasks, SPACES } from "./parse.js";
-import * as todoist from "./todoist.js?v=6";
+import * as todoist from "./todoist.js?v=7";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -555,7 +555,7 @@ function renderCraftTasks() {
   const shown = craftTasks.filter(t => spaces.length < 2 || !hiddenSpaces.has(t.spaceId));
   if (spaces.length > 1) title.replaceChildren(filterRow(spaces));
   box.replaceChildren(
-    fold("today", "today", shown.filter(due)),
+    fold("today", "today", shown.filter(due), false, moveAllButton),
     fold("upcoming", "upcoming", shown.filter(t => !due(t)), true),
   );
 }
@@ -593,14 +593,15 @@ const inOrder = (list, dateFirst) => [...list].sort((a, b) =>
   (dateFirst ? byDate(a, b) || bySpaceOrder(a, b) : bySpaceOrder(a, b) || byDate(a, b)) ||
   a.text.localeCompare(b.text));
 
-function fold(key, label, list, dateFirst = false) {
+function fold(key, label, list, dateFirst = false, action = null) {
   const wrap = document.createElement("section");
   const closed = openSections[key] === false || (!list.length && openSections[key] !== true);
   wrap.className = `fold${closed ? " closed" : ""}`;
-  wrap.innerHTML = `<button class="fold-head"><span class="fold-name">${esc(label)}<span class="dot">.</span></span>
+  wrap.innerHTML = `<div class="fold-top"><button class="fold-head"><span class="fold-name">${esc(label)}<span class="dot">.</span></span>
       <span class="n">${list.length}</span>
       <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-    </button><div class="fold-body"></div>`;
+    </button></div><div class="fold-body"></div>`;
+  if (action && list.length) wrap.querySelector(".fold-top").append(action(list));
   const body = wrap.querySelector(".fold-body");
   if (!list.length) body.innerHTML = `<p class="empty">Nothing here.</p>`;
   else inOrder(list, dateFirst).forEach(task => body.append(taskRow(task)));
@@ -610,6 +611,70 @@ function fold(key, label, list, dateFirst = false) {
   };
   return wrap;
 }
+
+const isoDay = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+// Moves everything in today. (overdue included) to tomorrow in one go. Craft
+// takes a whole space's worth in one request; Todoist takes them one at a
+// time. Recurring Todoist tasks are left alone, since setting a plain date
+// would wipe out their repeat. So are tasks this connection can't change.
+function moveAllButton(list) {
+  const btn = document.createElement("button");
+  btn.className = "move-all";
+  btn.textContent = "→ tomorrow";
+  btn.setAttribute("aria-label", "Move all of today’s and overdue tasks to tomorrow");
+  btn.onclick = () => moveToTomorrow(list, btn);
+  return btn;
+}
+
+async function moveToTomorrow(list, btn) {
+  const movable = list.filter(t => !t.recurring && !isLocked(t));
+  const skipped = list.length - movable.length;
+  if (!movable.length) { toast("None of these can be moved from here", "err"); return; }
+  const tomorrow = new Date(startOfToday());
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const date = isoDay(tomorrow);
+  btn.disabled = true;
+  btn.textContent = "Moving…";
+  const groups = new Map();
+  for (const task of movable) {
+    if (!groups.has(task.spaceId)) groups.set(task.spaceId, []);
+    groups.get(task.spaceId).push(task);
+  }
+  let moved = 0;
+  const errors = [];
+  await Promise.all([...groups].map(async ([spaceId, tasks]) => {
+    if (isTodoist(spaceId)) {
+      await Promise.all(tasks.map(task => todoist.rescheduleTask(task.id, date)
+        .then(() => { task.date = date; moved++; })
+        .catch(err => errors.push(err))));
+      return;
+    }
+    try {
+      await craft(spaceId, "/tasks", {
+        method: "PUT",
+        body: JSON.stringify({ tasksToUpdate: tasks.map(t => ({ id: t.id, taskInfo: { scheduleDate: date } })) }),
+      });
+      tasks.forEach(t => { t.date = date; });
+      moved += tasks.length;
+    } catch (err) {
+      errors.push(err);
+    }
+  }));
+  renderCraftTasks();
+  if (errors.length) {
+    console.error("Moving tasks to tomorrow failed:", errors);
+    const err = errors[0];
+    toast(`${moved ? `Moved ${moved}, but some` : "The tasks"} couldn’t be moved: ${
+      err instanceof TypeError ? "couldn’t reach Craft or Todoist" : err.message}`, "err");
+  } else {
+    toast(`Moved ${moved} task${moved === 1 ? "" : "s"} to tomorrow${skipped ? ` · ${skipped} repeating or locked left as is` : ""}`);
+  }
+}
+
+const isLocked = (task) =>
+  !isTodoist(task.spaceId) && task.where.rank === 2 && canEditDocs[task.spaceId] === false;
 
 function taskRow(task) {
   const row = document.createElement("div");
@@ -629,7 +694,7 @@ function taskRow(task) {
   const when = row.querySelector("input[type=date]");
   when.value = task.date || "";
   when.onchange = () => { if (when.value) reschedule(task, when.value, row); };
-  const locked = !isTodoist(task.spaceId) && task.where.rank === 2 && canEditDocs[task.spaceId] === false;
+  const locked = isLocked(task);
   row.classList.toggle("locked", locked);
   row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);
   row.querySelector(".t-text").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : editText(task, row);
