@@ -1,7 +1,7 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "./parse.js";
-import * as todoist from "./todoist.js?v=8";
-import * as gcal from "./calendar.js?v=8";
+import { parseTasks, SPACES } from "./parse.js?v=10";
+import * as todoist from "./todoist.js?v=10";
+import * as gcal from "./calendar.js?v=10";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -720,8 +720,8 @@ const isoDay = (d) =>
 
 // Moves everything in today. (overdue included) to tomorrow in one go. Craft
 // takes a whole space's worth in one request; Todoist takes them one at a
-// time. Recurring Todoist tasks are left alone, since setting a plain date
-// would wipe out their repeat. So are tasks this connection can't change.
+// time, a repeating one keeping its repeat (see todoist.rescheduleTask).
+// Tasks this connection can't change are left alone.
 function moveAllButton(list) {
   const btn = document.createElement("button");
   btn.className = "move-all";
@@ -732,7 +732,7 @@ function moveAllButton(list) {
 }
 
 async function moveToTomorrow(list, btn) {
-  const movable = list.filter(t => !(isTodoist(t.spaceId) && t.recurring) && !isLocked(t));
+  const movable = list.filter(t => !isLocked(t));
   const skipped = list.length - movable.length;
   if (!movable.length) { toast("None of these can be moved from here", "err"); return; }
   const tomorrow = new Date(startOfToday());
@@ -773,7 +773,7 @@ async function moveToTomorrow(list, btn) {
     toast(`${moved ? `Moved ${moved}, but some` : "The tasks"} couldn’t be moved: ${
       err instanceof TypeError ? "couldn’t reach Craft or Todoist" : err.message}`, "err");
   } else {
-    toast(`Moved ${moved} task${moved === 1 ? "" : "s"} to tomorrow${skipped ? ` · ${skipped} repeating or locked left as is` : ""}`);
+    toast(`Moved ${moved} task${moved === 1 ? "" : "s"} to tomorrow${skipped ? ` · ${skipped} locked left as is` : ""}`);
   }
 }
 
