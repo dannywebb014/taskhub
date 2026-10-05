@@ -1,8 +1,8 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=12";
-import * as todoist from "/lifeos/shared/todoist.js?v=12";
-import * as gcal from "./calendar.js?v=12";
-import * as speech from "/lifeos/shared/speech.js?v=12";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=13";
+import * as todoist from "/lifeos/shared/todoist.js?v=13";
+import * as gcal from "./calendar.js?v=13";
+import * as speech from "/lifeos/shared/speech.js?v=13";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -411,6 +411,25 @@ function placeOf(location) {
 }
 const isLate = (t) => { const d = dayDiff(t.date); return d !== null && d < 0; };
 
+// Craft's dated lists and its inbox leave out a task in a document with no
+// date, so those come from the whole-space list ("all"), which also holds
+// done tasks and anything in the trash or a template; those are dropped.
+// A connection that can't see documents has no such list, which is fine.
+async function undatedDocTasks(spaceId) {
+  try {
+    const [all, trash, templates] = await Promise.all([
+      craft(spaceId, "/tasks?scope=all"),
+      craft(spaceId, "/documents?location=trash"),
+      craft(spaceId, "/documents?location=templates"),
+    ]);
+    const skip = new Set([...(trash.items || []), ...(templates.items || [])].map(d => d.id));
+    return (all.items || []).filter(i => i.taskInfo?.state === "todo" && i.location?.type === "document" && !skip.has(i.location.documentId));
+  } catch (err) {
+    if (err.status !== 404) console.error(`Loading undated ${spaceLabel(spaceId)} tasks failed:`, err);
+    return [];
+  }
+}
+
 async function loadCraftTasks() {
   const spaces = SPACES.filter(s => !isTodoist(s.id) && isConfigured(s.id));
   if (!spaces.length) { craftTasks = []; renderCraftTasks(); return; }
@@ -424,8 +443,11 @@ async function loadCraftTasks() {
       .then(() => { canEditDocs[space.id] = true; })
       .catch(err => { if (err.status === 404) canEditDocs[space.id] = false; });
     try {
-      const lists = await Promise.all(SCOPES.map(scope => craft(space.id, `/tasks?scope=${scope}`)));
-      for (const list of lists) {
+      const [lists, undated] = await Promise.all([
+        Promise.all(SCOPES.map(scope => craft(space.id, `/tasks?scope=${scope}`))),
+        undatedDocTasks(space.id),
+      ]);
+      for (const list of [...lists, { items: undated }]) {
         for (const item of list.items || []) {
           if (item.taskInfo?.state !== "todo") continue;
           const markdown = item.markdown || "";
