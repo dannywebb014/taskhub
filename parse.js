@@ -21,6 +21,10 @@
 //     without changing the workspace of the tasks after it.
 //   - The first date phrase in a task becomes its schedule date and is
 //     removed from the text.
+//   - A time in it ("tomorrow at 3pm", "3pm") becomes the task's time, which
+//     blocks it out on the calendar. A time alone means today, or tomorrow
+//     once it has passed. "For 30 minutes" / "for an hour" after a time sets
+//     how long; without a time it is left in the task.
 
 export const SPACES = [
   { id: "my", label: "my space.", pattern: "my\\s*space|personal" },
@@ -59,15 +63,37 @@ const tidy = (s) => {
 
 // Pull the first date phrase out of a task. Words that only make sense
 // attached to the date ("on", "by", "for") go with it.
-function takeDate(text, chrono, now) {
+// "for 45 mins", "for an hour", "for 1.5 hours", "for half an hour"
+const LENGTH = /[\s,]*\bfor\s+(half\s+an?|an?|\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|h)\b/i;
+
+function takeLength(text) {
+  const m = text.match(LENGTH);
+  if (!m) return { text, minutes: null };
+  const n = /^half/i.test(m[1]) ? 0.5 : /^an?$/i.test(m[1]) ? 1 : Number(m[1]);
+  const minutes = Math.round(/^h/i.test(m[2]) ? n * 60 : n);
+  if (!minutes || minutes > 24 * 60) return { text, minutes: null };
+  return { text: text.slice(0, m.index) + text.slice(m.index + m[0].length), minutes };
+}
+
+const hhmm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+
+// chrono reads "for 30 mins" as "30 minutes from now", so a length is taken
+// out before it looks, and only kept as a length when a time was said.
+function takeDate(full, chrono, now) {
+  const { text, minutes: length } = takeLength(full);
   const [hit] = chrono.en.GB.parse(text, now, { forwardDate: true });
-  if (!hit) return { text, date: null };
-  const date = isoDate(hit.start.date());
+  if (!hit) return { text: full, date: null, time: null, minutes: null };
+  const when = hit.start.date();
+  const date = isoDate(when);
+  // Only a time actually said counts: "tomorrow" alone also carries an hour.
+  const time = hit.start.isCertain("hour") ? hhmm(when) : null;
   const after = text.slice(hit.index + hit.text.length);
   // "Thursday's meeting" — the date is part of the wording, so keep it.
-  if (/^['’]s\b/.test(after)) return { text, date };
-  const before = text.slice(0, hit.index).replace(/\b(?:on|by|for|from|due|this)\s*$/i, "");
-  return { text: `${before} ${after}`, date };
+  if (/^['’]s\b/.test(after)) return { text: full, date, time: null, minutes: null };
+  const before = text.slice(0, hit.index).replace(/\b(?:on|by|for|from|due|this|at)\s*$/i, "");
+  const rest = `${before} ${after}`;
+  if (time) return { text: rest, date, time, minutes: length };
+  return { text: length ? `${rest} ${full.match(LENGTH)[0].trim()}` : rest, date, time, minutes: null };
 }
 
 export function parseTasks(input, chrono, { now = new Date(), defaultSpace = SPACES[0].id } = {}) {
@@ -94,9 +120,9 @@ export function parseTasks(input, chrono, { now = new Date(), defaultSpace = SPA
       space = spaceFor(trail[1]);
       s = s.slice(0, trail.index);
     }
-    const { text, date } = takeDate(s, chrono, now);
+    const { text, date, time, minutes } = takeDate(s, chrono, now);
     const clean = tidy(text);
-    if (clean) tasks.push({ text: clean, space, date });
+    if (clean) tasks.push({ text: clean, space, date, time, minutes });
   }
   return tasks;
 }

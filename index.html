@@ -76,6 +76,7 @@
       display:flex; align-items:center; justify-content:center; color:var(--muted); box-shadow:var(--shadow);
     }
     .icon-btn:active { transform:scale(.96); }
+    .hdr-btns { display:flex; gap:8px; }
 
     .dictate {
       width:100%; min-height:104px; resize:vertical; padding:14px 16px; border-radius:14px;
@@ -125,7 +126,7 @@
     .chip.space-todoist { color:var(--joint); background:var(--joint-soft); border-color:transparent; }
     .chip.has-date { color:var(--text); }
     /* The real date input sits invisibly on top so iOS opens its own picker. */
-    .chip input[type=date] { position:absolute; inset:0; opacity:0; width:100%; height:100%; border:none; }
+    .chip input[type=date], .chip input[type=time] { position:absolute; inset:0; opacity:0; width:100%; height:100%; border:none; }
     .chip .clear { margin-right:-6px; padding:0 4px; border:none; background:none; color:var(--dim); position:relative; z-index:1; font-size:15px; line-height:1; }
     .remove { border:none; background:none; color:var(--dim); width:32px; height:32px; border-radius:8px; flex-shrink:0; font-size:18px; }
     .remove:active { background:var(--danger-soft); color:var(--danger); }
@@ -195,6 +196,7 @@
     .t-when { position:relative; display:inline-flex; align-items:center; padding:2px 7px; margin:-2px 0; border-radius:9px; background:var(--input); cursor:pointer; }
     .t-when.late { color:var(--danger); font-weight:600; }
     .t-when.none { color:var(--dim); }
+    .t-rep { display:inline-flex; color:var(--dim); margin:0 -2px; }
     .t-when input[type=date] { position:absolute; inset:0; width:100%; height:100%; opacity:0; border:none; cursor:pointer; }
     .t-date.late { color:var(--danger); font-weight:600; }
     .loading { color:var(--dim); font-size:14px; text-align:center; padding:14px 0; }
@@ -224,8 +226,8 @@
     .dlg { padding:18px 16px 16px; }
     .dlg h2 { font-family:var(--hub-head, 'Lora', Georgia, serif); font-weight:600; font-size:21px; margin:0 0 4px; }
     .dlg p.sub { color:var(--muted); font-size:14px; margin:0 0 16px; }
-    .space-box { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:12px; margin-bottom:12px; }
-    .space-box h3 { margin:0 0 8px; font-size:15px; font-weight:700; display:flex; align-items:center; gap:8px; }
+    .space-box, .cal-box { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:12px; margin-bottom:12px; }
+    .space-box h3, .cal-box h3 { margin:0 0 8px; font-size:15px; font-weight:700; display:flex; align-items:center; gap:8px; }
     .dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
     label.f { display:block; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin:8px 0 4px; }
     .field {
@@ -251,9 +253,14 @@
   <div class="wrap">
     <header>
       <h1 class="logo">tasks<span>.</span></h1>
+      <div class="hdr-btns">
+      <a class="icon-btn" href="../calhub/" data-hub="cal" aria-label="Open calendar." title="Open calendar.">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      </a>
       <button class="icon-btn" id="open-settings" aria-label="Settings">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
+      </div>
     </header>
 
     <textarea id="dictation" class="dictate" rows="5" autocapitalize="sentences"
@@ -292,6 +299,7 @@
       <div id="space-fields"></div>
       <label class="f" for="default-space">If you don’t say a space</label>
       <select class="field" id="default-space" style="margin-bottom:14px"></select>
+      <div id="google-fields"></div>
       <div class="dlg-foot">
         <button class="primary" value="save">Done</button>
       </div>
@@ -300,6 +308,6 @@
 
   <!-- The version is bumped on each release so a phone holding the page in
        its cache still fetches the new code. -->
-  <script type="module" src="app.js?v=7"></script>
+  <script type="module" src="app.js?v=8"></script>
 </body>
 </html>

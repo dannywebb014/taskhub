@@ -1,6 +1,7 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
 import { parseTasks, SPACES } from "./parse.js";
-import * as todoist from "./todoist.js?v=7";
+import * as todoist from "./todoist.js?v=8";
+import * as gcal from "./calendar.js?v=8";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -14,9 +15,9 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<"
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-    return { spaces: s.spaces || {}, todoist: s.todoist || {}, defaultSpace: s.defaultSpace || SPACES[0].id };
+    return { spaces: s.spaces || {}, todoist: s.todoist || {}, google: s.google || {}, defaultSpace: s.defaultSpace || SPACES[0].id };
   } catch {
-    return { spaces: {}, todoist: {}, defaultSpace: SPACES[0].id };
+    return { spaces: {}, todoist: {}, google: {}, defaultSpace: SPACES[0].id };
   }
 }
 function saveSettings(s) {
@@ -24,6 +25,8 @@ function saveSettings(s) {
 }
 let settings = loadSettings();
 todoist.setToken(settings.todoist?.token);
+// Google's client is calendar.'s unless one is set here.
+const clientId = () => settings.google?.clientId || gcal.calendarClientId();
 
 // Only the link ID matters, so anything around it in a paste (a missing
 // /api/v1, a trailing slash, a path copied from the docs) is ignored.
@@ -111,6 +114,12 @@ function render() {
           <input type="date" aria-label="Schedule date">
           ${t.date ? `<button class="clear" data-act="nodate" aria-label="Remove date">×</button>` : ""}
         </span>
+        <span class="chip ${t.time ? "has-date" : ""}">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+          <span class="time-label"></span>
+          <input type="time" step="900" aria-label="Time to block out">
+          ${t.time ? `<button class="clear" data-act="notime" aria-label="Remove time">×</button>` : ""}
+        </span>
       </div>`;
     const text = el.querySelector(".task-text");
     text.value = t.text;
@@ -125,17 +134,25 @@ function render() {
     el.querySelector(".date-label").textContent = dateLabel(t.date);
     const picker = el.querySelector("input[type=date]");
     picker.value = t.date || "";
-    picker.addEventListener("change", () => { t.date = picker.value || null; render(); });
+    picker.addEventListener("change", () => { t.date = picker.value || null; if (!t.date) t.time = null; render(); });
+    el.querySelector(".time-label").textContent = t.time ? `${t.time}${t.minutes && t.minutes !== gcal.DEFAULT_MINUTES ? ` · ${lengthText(t.minutes)}` : ""}` : "Add time";
+    const clock = el.querySelector("input[type=time]");
+    clock.value = t.time || "";
+    // A time needs a day, so it brings today along when there isn't one.
+    clock.addEventListener("change", () => { t.time = clock.value || null; if (t.time && !t.date) t.date = isoDay(new Date()); render(); });
     el.querySelector("[data-act=space]").addEventListener("click", () => {
       const idx = SPACES.findIndex(s => s.id === t.space);
       t.space = SPACES[(idx + 1) % SPACES.length].id;
       render();
     });
-    el.querySelector("[data-act=nodate]")?.addEventListener("click", (e) => { e.stopPropagation(); t.date = null; render(); });
+    el.querySelector("[data-act=nodate]")?.addEventListener("click", (e) => { e.stopPropagation(); t.date = null; t.time = null; render(); });
+    el.querySelector("[data-act=notime]")?.addEventListener("click", (e) => { e.stopPropagation(); t.time = null; render(); });
     el.querySelector(".remove").addEventListener("click", () => { tasks.splice(i, 1); render(); });
     return el;
   }));
 }
+
+const lengthText = (m) => m % 60 ? (m > 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m} min`) : `${m / 60}h`;
 
 // Re-read the dictation as it changes. Edits made in the list are kept until
 // the dictation itself is changed again.
@@ -197,6 +214,9 @@ sendBtn.addEventListener("click", async () => {
   for (const t of tasks) bySpace.set(t.space, [...(bySpace.get(t.space) || []), t]);
   const failed = [];
   let added = 0;
+  // Tasks given a time, each with its new ID where the API handed one back.
+  const timed = [];
+  const owe = (t, id, spaceId) => { if (t.time && t.date) timed.push({ id: id ? String(id) : null, text: t.text.trim(), spaceId, date: t.date, time: t.time, minutes: t.minutes || gcal.DEFAULT_MINUTES }); };
   for (const [spaceId, group] of bySpace) {
     try {
       if (isTodoist(spaceId)) {
@@ -204,10 +224,11 @@ sendBtn.addEventListener("click", async () => {
         // dictation or, failing that, the shared list.
         for (const t of group) {
           const project = t.project || todoist.pickProject(t.text.trim(), projects).project;
-          await todoist.addTask({ text: t.text.trim(), date: t.date, projectId: project?.id });
+          const made = await todoist.addTask({ text: t.text.trim(), date: t.date, projectId: project?.id });
+          owe(t, made?.id, spaceId);
         }
       } else {
-        await craft(spaceId, "/tasks", {
+        const made = await craft(spaceId, "/tasks", {
           method: "POST",
           body: JSON.stringify({
             tasks: group.map(t => ({
@@ -217,6 +238,10 @@ sendBtn.addEventListener("click", async () => {
             })),
           }),
         });
+        // Craft doesn't document what it returns, so the IDs are used only
+        // when there is one per task; otherwise the task is found by its text.
+        const ids = (made?.items || made?.tasks || (Array.isArray(made) ? made : [])).map(x => x?.id);
+        group.forEach((t, i) => owe(t, ids.length === group.length ? ids[i] : null, spaceId));
       }
       added += group.length;
     } catch (err) {
@@ -226,7 +251,7 @@ sendBtn.addEventListener("click", async () => {
   }
 
   tasks = failed.flatMap(f => f.group);
-  if (added) loadCraftTasks();
+  const reload = added ? loadCraftTasks() : null;
   // Once anything has gone through, re-reading the dictation would bring those
   // tasks back and add them twice, so it is cleared; failures stay in the list.
   if (added) dictation.value = "";
@@ -237,7 +262,81 @@ sendBtn.addEventListener("click", async () => {
     toast(`${added ? `Added ${added}, but ` : ""}couldn’t add to ${why}`, "err");
   }
   render();
+  if (timed.length) {
+    await reload;
+    placeBlocks(timed);
+  }
 });
+
+// ─── Time blocks ─────────────────────────────────────────────────────
+// A task with a time has a block on the main calendar, made the way
+// calendar. makes them (see calendar.js), so it shows there too.
+let blocks = new Map();   // task ID → its block that isn't done
+
+// A block's time shows on the task while the two are on the same day.
+const timeOf = (task) => { const b = blocks.get(task.id); return b && b.day === task.date ? gcal.hhmm(b.start) : ""; };
+const whenText = (task) => task.date ? dateText(task.date) + (timeOf(task) ? ` · ${timeOf(task)}` : "") : "Set a date";
+
+async function loadBlocks() {
+  if (!gcal.isConnected()) return;
+  try {
+    blocks = await gcal.loadBlocks();
+    renderCraftTasks();
+  } catch (err) {
+    console.error("Loading time blocks failed:", err);
+  }
+}
+
+// Blocks for tasks just added. Without a Google sign-in they wait on this
+// device, and a quiet trip through Google fetches one where it can.
+async function placeBlocks(list) {
+  if (!gcal.isConnected()) {
+    gcal.setPending([...gcal.pending(), ...list]);
+    if (clientId() && gcal.wasConnected() && !gcal.silentTried()) { gcal.connect(clientId(), { silent: true }); return; }
+    toast("Added. To block out the time on your calendar, connect Google Calendar in settings.", "err");
+    return;
+  }
+  let made = 0;
+  const failed = [];
+  for (const item of list) {
+    const task = (item.id && craftTasks.find(t => t.id === item.id && t.spaceId === item.spaceId))
+      || craftTasks.find(t => t.spaceId === item.spaceId && t.text === item.text && !blocks.has(t.id))
+      || (item.id ? { id: item.id, text: item.text, spaceId: item.spaceId } : null);
+    if (!task) { failed.push(item.text); continue; }
+    try {
+      blocks.set(task.id, await gcal.createBlock(task, item.date, item.time, item.minutes));
+      made++;
+    } catch (err) {
+      console.error("Blocking out time failed:", err);
+      failed.push(item.text);
+      if (err.status === 401) { gcal.setPending([...gcal.pending(), item]); }
+    }
+  }
+  renderCraftTasks();
+  if (failed.length) toast(`Couldn’t block out time for ${failed.join(", ")}`, "err");
+  else if (made) toast(`Blocked out ${made === 1 ? `${list[0].time} for ${list[0].text}` : `time for ${made} tasks`}`);
+}
+
+// Blocks that were waiting for a sign-in.
+function placePending() {
+  const list = gcal.pending();
+  if (!list.length || !gcal.isConnected()) return;
+  gcal.setPending([]);
+  placeBlocks(list);
+}
+
+// A task moved to another day takes its block with it, at the same time,
+// as calendar. does.
+async function followTask(task, date) {
+  const b = blocks.get(task.id);
+  if (!b || b.day === date) return;
+  try {
+    blocks.set(task.id, await gcal.moveBlock(b, date));
+  } catch (err) {
+    console.error("Moving the time block failed:", err);
+    toast(`Moved ${task.text}, but not its time block on the calendar`, "err");
+  }
+}
 
 
 // ─── Speaking straight into the page ─────────────────────────────────
@@ -376,6 +475,7 @@ async function loadCraftTasks() {
   if (!spaces.length) { craftTasks = []; renderCraftTasks(); return; }
   loadingTasks = true;
   renderCraftTasks();
+  const blocksJob = loadBlocks();
   const found = new Map();
   const failed = [];
   const jobs = spaces.map(async (space) => {
@@ -394,6 +494,7 @@ async function loadCraftTasks() {
             // Any checkbox prefix Craft sent, so a rename goes back in the same shape.
             prefix: (markdown.match(/^\s*[-*]\s*\[[ x]\]\s*/) || [""])[0],
             date: item.taskInfo?.scheduleDate || null,
+            recurring: Boolean(item.taskInfo?.repeat),
             spaceId: space.id,
             where: placeOf(item.location),
           });
@@ -415,7 +516,7 @@ async function loadCraftTasks() {
       }
     })());
   }
-  await Promise.all(jobs);
+  await Promise.all([...jobs, blocksJob]);
   routeTodoist();
   if (tasks.length) render();
   craftTasks = [...found.values()];
@@ -436,7 +537,8 @@ async function reschedule(task, date, row) {
       method: "PUT",
       body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { scheduleDate: date } }] }),
     });
-    toast(`${task.text} → ${dateText(date)}`);
+    await followTask(task, date);
+    toast(`${task.text} → ${whenText(task)}`);
     renderCraftTasks();
   } catch (err) {
     console.error("Changing the date failed:", err);
@@ -629,7 +731,7 @@ function moveAllButton(list) {
 }
 
 async function moveToTomorrow(list, btn) {
-  const movable = list.filter(t => !t.recurring && !isLocked(t));
+  const movable = list.filter(t => !(isTodoist(t.spaceId) && t.recurring) && !isLocked(t));
   const skipped = list.length - movable.length;
   if (!movable.length) { toast("None of these can be moved from here", "err"); return; }
   const tomorrow = new Date(startOfToday());
@@ -662,6 +764,7 @@ async function moveToTomorrow(list, btn) {
       errors.push(err);
     }
   }));
+  await Promise.all(movable.filter(t => t.date === date).map(t => followTask(t, date)));
   renderCraftTasks();
   if (errors.length) {
     console.error("Moving tasks to tomorrow failed:", errors);
@@ -685,9 +788,10 @@ function taskRow(task) {
     <div class="t-body"><div class="t-text"></div><div class="t-meta">
       <span class="t-space ${task.spaceId}"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</span>
       <label class="t-when${isLate(task) ? " late" : ""}${task.date ? "" : " none"}">
-        <span class="when-text">${esc(task.date ? dateText(task.date) : "Set a date")}</span>
+        <span class="when-text">${esc(whenText(task))}</span>
         <input type="date" aria-label="Scheduled date">
       </label>
+      ${task.recurring ? `<span class="t-rep" title="Repeats" aria-label="Repeats"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>` : ""}
       <span class="t-doc">${esc(task.where.label)}</span>
     </div></div>`;
   row.querySelector(".t-text").textContent = task.text || "(no text)";
@@ -774,6 +878,45 @@ function todoistBox(space) {
   return box;
 }
 
+// Google Calendar, for the times tasks are blocked out at. The client is the
+// one calendar. uses; this page's address has to be one of its authorised
+// redirect URIs for signing in here.
+function googleBox() {
+  const box = document.createElement("div");
+  box.className = "cal-box";
+  const connected = gcal.isConnected();
+  box.innerHTML = `
+    <h3><span class="dot" style="background:var(--muted)"></span>Google Calendar</h3>
+    <label class="f">OAuth client ID</label>
+    <input class="field" data-k="client" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="….apps.googleusercontent.com">
+    <p class="note">Shows the time each task is blocked out in calendar., and blocks out a time you say (“call Sam at 3pm”). It’s the same client as calendar.; add <b>${esc(location.origin + location.pathname)}</b> to its authorised redirect URIs.</p>
+    <div class="row"><button type="button" class="btn">${connected ? "Disconnect" : "Connect"}</button><span class="test-result"></span></div>`;
+  const id = box.querySelector("[data-k=client]");
+  id.value = clientId();
+  const result = box.querySelector(".test-result");
+  result.className = `test-result${connected ? " ok" : ""}`;
+  result.textContent = connected ? `Connected${gcal.email() ? ` as ${gcal.email()}` : ""}` : gcal.wasConnected() ? "Signed out" : "Not connected";
+  id.addEventListener("change", () => { settings.google = { clientId: id.value.trim() }; saveSettings(settings); });
+  box.querySelector(".btn").addEventListener("click", () => {
+    if (connected) {
+      gcal.disconnect();
+      blocks = new Map();
+      renderCraftTasks();
+      $("google-fields").replaceChildren(googleBox());
+      return;
+    }
+    settings.google = { clientId: id.value.trim() };
+    saveSettings(settings);
+    if (!clientId().endsWith(".apps.googleusercontent.com")) {
+      result.className = "test-result err";
+      result.textContent = "Paste the client ID from calendar.’s settings";
+      return;
+    }
+    gcal.connect(clientId());
+  });
+  return box;
+}
+
 function openSettings() {
   const fields = $("space-fields");
   fields.replaceChildren(...SPACES.map(s => {
@@ -810,6 +953,7 @@ function openSettings() {
     });
     return box;
   }));
+  $("google-fields").replaceChildren(googleBox());
   const sel = $("default-space");
   sel.replaceChildren(...SPACES.map(s => new Option(s.label, s.id, false, s.id === settings.defaultSpace)));
   sel.onchange = () => { settings.defaultSpace = sel.value; saveSettings(settings); };
@@ -834,6 +978,22 @@ dialog.addEventListener("close", () => {
   loadCraftTasks();
 });
 
+// calendar. and tasks. link to each other. Inside the lifeOS picker the
+// picker switches tabs; opened on its own, the link is simply followed.
+document.querySelectorAll("a[data-hub]").forEach(a => a.addEventListener("click", (e) => {
+  try {
+    if (window.top !== window && window.top.lifeosOpen?.(a.dataset.hub)) e.preventDefault();
+  } catch { /* another site's frame: follow the link */ }
+}));
+
+// Back from Google, or due a quiet trip there for a fresh token.
+const back = gcal.takeRedirect();
+if (back?.error && gcal.pending().length) {
+  toast("Sign in to Google Calendar in settings to block out the times you said.", "err");
+} else if (!back && clientId() && gcal.wasConnected() && !gcal.isConnected() && !gcal.silentTried()) {
+  gcal.connect(clientId(), { silent: true });
+}
+
 render();
-loadCraftTasks();
+loadCraftTasks().then(placePending);
 if (!SPACES.some(s => isConfigured(s.id))) openSettings();
