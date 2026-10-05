@@ -1,8 +1,8 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=11";
-import * as todoist from "/lifeos/shared/todoist.js?v=11";
-import * as gcal from "./calendar.js?v=11";
-import * as speech from "/lifeos/shared/speech.js?v=11";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=12";
+import * as todoist from "/lifeos/shared/todoist.js?v=12";
+import * as gcal from "./calendar.js?v=12";
+import * as speech from "/lifeos/shared/speech.js?v=12";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -405,7 +405,7 @@ function dateText(iso) {
 // Where a task lives, which is how the list is grouped. Inbox first, then
 // daily notes newest first, then documents by name.
 function placeOf(location) {
-  if (location?.type === "document") return { key: `d:${location.title}`, label: location.title || "Untitled", rank: 2 };
+  if (location?.type === "document") return { key: `d:${location.title}`, label: location.title || "Untitled", rank: 2, docId: location.documentId || location.id };
   if (location?.type === "dailyNote") return { key: `n:${location.date}`, label: `Daily note · ${dateText(location.date)}`, rank: 1, date: location.date };
   return { key: "inbox", label: "Inbox", rank: 0 };
 }
@@ -600,7 +600,8 @@ function renderCraftTasks() {
   if (spaces.length > 1) title.replaceChildren(filterRow(spaces));
   box.replaceChildren(
     fold("today", "today", shown.filter(due), false, moveAllButton),
-    fold("upcoming", "upcoming", shown.filter(t => !due(t)), true),
+    fold("upcoming", "upcoming", shown.filter(t => t.date && !due(t)), true),
+    fold("nodate", "no date", shown.filter(t => !t.date)),
   );
 }
 
@@ -632,7 +633,7 @@ const byDate = (a, b) => (a.date || "9999").localeCompare(b.date || "9999");
 
 // today. is one day's worth, so it reads by space: my space., work., joint.
 // upcoming. spans days, so the date leads and each day then reads in that
-// same space order. Undated tasks sit at the end either way.
+// same space order. Undated tasks have their own no date. section below.
 const inOrder = (list, dateFirst) => [...list].sort((a, b) =>
   (dateFirst ? byDate(a, b) || bySpaceOrder(a, b) : bySpaceOrder(a, b) || byDate(a, b)) ||
   a.text.localeCompare(b.text));
@@ -733,8 +734,9 @@ function taskRow(task) {
         <span class="when-text">${esc(whenText(task))}</span>
         <input type="date" aria-label="Scheduled date">
       </label>
+      ${isTodoist(task.spaceId) ? `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><span>${esc(task.where.label)}</span></button>`
+        : `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>${esc(task.where.label)}</span></button>`}
       ${task.recurring ? `<span class="t-rep" title="Repeats" aria-label="Repeats"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>` : ""}
-      <span class="t-doc">${esc(task.where.label)}</span>
     </div></div>`;
   row.querySelector(".t-text").textContent = task.text || "(no text)";
   const when = row.querySelector("input[type=date]");
@@ -744,10 +746,122 @@ function taskRow(task) {
   row.classList.toggle("locked", locked);
   row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);
   row.querySelector(".t-text").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : editText(task, row);
+  const doc = row.querySelector("button.t-doc");
+  doc.onclick = () => !isTodoist(task.spaceId) && canEditDocs[task.spaceId] === false ? toast(scopeHelp(task.spaceId), "err") : openMove(task);
   return row;
 }
 
-$("refresh").addEventListener("click", loadCraftTasks);
+// ─── Moving a task to another document or project ────────────────────
+// Tapping a task's document opens a searchable list of that space's
+// documents (and the inbox); a Todoist task's project opens its projects. Craft lists every document at once, trash,
+// templates and daily notes included, so those three are fetched too and
+// left out. The list is kept for the visit; Refresh fetches it again.
+const docLists = {};   // space ID → promise of [{ id, title }]
+function loadDocs(spaceId) {
+  if (isTodoist(spaceId)) return Promise.resolve(projects.map(p => ({ id: String(p.id), title: p.name })));
+  if (!docLists[spaceId]) {
+    const list = (q = "") => craft(spaceId, `/documents${q}`).then(r => r.items || []);
+    docLists[spaceId] = Promise.all([list(), list("?location=trash"), list("?location=templates"), list("?location=daily_notes")])
+      .then(([all, ...skip]) => {
+        const out = new Set(skip.flat().map(d => d.id));
+        return all.filter(d => !out.has(d.id))
+          .map(d => ({ id: d.id, title: d.title?.trim() || "Untitled" }))
+          .sort((a, b) => a.title.localeCompare(b.title));
+      });
+    docLists[spaceId].catch(() => { delete docLists[spaceId]; });
+  }
+  return docLists[spaceId];
+}
+
+const moveDialog = $("move");
+const moveSearch = $("move-search");
+const moveList = $("move-list");
+let moving = null;   // the task the dialog is open for
+
+async function openMove(task) {
+  finishEdit?.(true);
+  moving = task;
+  $("move-task").textContent = task.text;
+  moveSearch.value = "";
+  moveSearch.placeholder = isTodoist(task.spaceId) ? "Search projects" : "Search documents";
+  moveList.innerHTML = `<p class="note">Loading documents…</p>`;
+  moveDialog.showModal();
+  try {
+    const docs = await loadDocs(task.spaceId);
+    if (moving === task) showDocs(docs);
+  } catch (err) {
+    console.error("Loading documents failed:", err);
+    if (moving !== task) return;
+    moveList.innerHTML = `<p class="note">${esc(err.status === 404 ? scopeHelp(task.spaceId)
+      : err instanceof TypeError ? "Couldn’t reach Craft." : `Couldn’t load the documents: ${err.message}`)}</p>`;
+  }
+}
+
+// With nothing typed, the documents already holding tasks in this space come
+// first, as the likeliest places to move one to; typing searches every title.
+function showDocs(docs) {
+  const task = moving;
+  if (!task) return;
+  const q = moveSearch.value.trim().toLowerCase();
+  const placeId = (t) => t.where.docId || t.where.projectId;
+  const inUse = new Set(craftTasks.filter(t => t.spaceId === task.spaceId).map(placeId).filter(Boolean));
+  const matches = q
+    ? docs.filter(d => d.title.toLowerCase().includes(q))
+    : [...docs.filter(d => inUse.has(d.id)), ...docs.filter(d => !inUse.has(d.id))];
+  const here = (d) => d.id === placeId(task);
+  const opts = [];
+  if (!isTodoist(task.spaceId) && (!q || "inbox".includes(q))) opts.push({ dest: { type: "inbox" }, label: "Inbox", here: task.where.rank === 0 });
+  for (const d of matches) opts.push({ dest: { type: "document", id: d.id, title: d.title }, label: d.title, here: here(d) });
+  if (!opts.length) { moveList.innerHTML = `<p class="note">No ${isTodoist(task.spaceId) ? "project" : "document"} called that.</p>`; return; }
+  moveList.replaceChildren(...opts.map(o => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `doc-opt${o.here ? " here" : ""}`;
+    btn.innerHTML = `<span class="t"></span>${o.here ? `<span class="tag">here now</span>` : ""}`;
+    btn.firstChild.textContent = o.label;
+    btn.onclick = () => {
+      moveDialog.close();
+      if (!o.here) moveTask(task, o.dest);
+    };
+    return btn;
+  }));
+}
+
+moveSearch.addEventListener("input", () => { if (moving) loadDocs(moving.spaceId).then(showDocs, () => {}); });
+// Enter would submit the dialog's form and close it, so it picks the top match.
+moveSearch.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  moveList.querySelector(".doc-opt:not(.here)")?.click();
+});
+moveDialog.addEventListener("close", () => { moving = null; });
+
+async function moveTask(task, dest) {
+  const was = task.where;
+  task.where = isTodoist(task.spaceId) ? { key: `p:${dest.id}`, label: dest.title, rank: 2, projectId: dest.id }
+    : placeOf(dest.type === "inbox" ? { type: "inbox" } : { type: "document", documentId: dest.id, title: dest.title });
+  renderCraftTasks();
+  try {
+    if (isTodoist(task.spaceId)) await todoist.moveTask(task.id, dest.id);
+    else await craft(task.spaceId, "/tasks", {
+      method: "PUT",
+      body: JSON.stringify({ tasksToUpdate: [{ id: task.id, location: dest.type === "inbox" ? { type: "inbox" } : { type: "document", documentId: dest.id } }] }),
+    });
+    toast(`${task.text} → ${task.where.label}`);
+  } catch (err) {
+    console.error("Moving the task failed:", err);
+    task.where = was;
+    renderCraftTasks();
+    toast(err instanceof TypeError ? "Couldn’t reach Craft or Todoist"
+      : /scope/i.test(err.message) ? scopeHelp(task.spaceId)
+      : `Couldn’t move it: ${err.message}`, "err");
+  }
+}
+
+$("refresh").addEventListener("click", () => {
+  for (const id in docLists) delete docLists[id];
+  loadCraftTasks();
+});
 
 // ─── Settings dialog ─────────────────────────────────────────────────
 // Craft has three kinds of API connection and only two can manage tasks:

@@ -160,8 +160,29 @@
     .fold.closed .fold-body { display:none; }
     .fold-body { padding-top:2px; }
     .t-row.locked .tick { opacity:.3; }
-    .t-doc { color:var(--muted); }
+    .t-doc { color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .t-doc::before { content:"· "; }
+    .t-space, .t-when, .t-rep { flex-shrink:0; }
+    /* A Craft task's document, tappable to move it to another. */
+    button.t-doc {
+      display:inline-flex; align-items:center; gap:4px; max-width:100%; padding:2px 7px; margin:-2px 0; border:none; border-radius:9px;
+      background:var(--input); font:inherit; color:var(--muted); cursor:pointer;
+    }
+    button.t-doc::before { content:none; }
+    button.t-doc svg { flex-shrink:0; }
+    button.t-doc span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+    button.t-doc:active { background:var(--accent-soft); color:var(--accent-text); }
+    .doc-list { margin-top:10px; max-height:min(50vh, 380px); overflow:auto; border:1px solid var(--border); border-radius:12px; background:var(--card); }
+    .doc-opt {
+      display:flex; align-items:center; gap:8px; width:100%; padding:11px 12px; border:none; border-top:1px solid var(--border);
+      background:none; text-align:left; font-size:15px; color:var(--text);
+    }
+    .doc-opt:first-child { border-top:none; }
+    .doc-opt:active { background:var(--accent-soft); }
+    .doc-opt .t { flex:1; min-width:0; overflow-wrap:anywhere; }
+    .doc-opt.here { color:var(--muted); }
+    .doc-opt .tag { flex-shrink:0; font-size:12px; font-weight:600; color:var(--dim); }
+    .doc-list .note { margin:0; padding:12px; color:var(--dim); font-size:14px; }
     .space-head {
       display:flex; align-items:center; gap:7px; font-family:var(--hub-head, 'Lora', Georgia, serif); font-size:16px; font-weight:600;
       margin:18px 2px 2px; padding-bottom:6px; border-bottom:1px solid var(--border);
@@ -306,8 +327,18 @@
     </form>
   </dialog>
 
+  <dialog id="move">
+    <form method="dialog" class="dlg">
+      <h2>Move to</h2>
+      <p class="sub" id="move-task"></p>
+      <input class="field" id="move-search" type="search" placeholder="Search documents" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+      <div class="doc-list" id="move-list"></div>
+      <div class="dlg-foot"><button class="btn" value="cancel">Cancel</button></div>
+    </form>
+  </dialog>
+
   <!-- The version is bumped on each release so a phone holding the page in
        its cache still fetches the new code. -->
-  <script type="module" src="app.js?v=11"></script>
+  <script type="module" src="app.js?v=12"></script>
 </body>
 </html>
