@@ -1,7 +1,8 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "./parse.js?v=10";
-import * as todoist from "./todoist.js?v=10";
-import * as gcal from "./calendar.js?v=10";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=11";
+import * as todoist from "/lifeos/shared/todoist.js?v=11";
+import * as gcal from "./calendar.js?v=11";
+import * as speech from "/lifeos/shared/speech.js?v=11";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -340,86 +341,26 @@ async function followTask(task, date) {
 
 
 // ─── Speaking straight into the page ─────────────────────────────────
-// The browser's own speech recognition, so there is a button to press
-// instead of reaching for the keyboard's microphone. It never punctuates,
-// so each finished phrase becomes its own line, which the parser treats as
-// one task. iOS ends a session after a pause, so it is restarted until the
-// button is pressed again.
+// The browser's own speech recognition (lifeos/shared/speech.js), so there
+// is a button to press instead of reaching for the keyboard's microphone.
+// Each finished phrase becomes its own line, which the parser treats as one
+// task, and it keeps listening until the button is pressed again.
 
-const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recogniser = null;
-let listening = false;
-// Whether phrase a already holds phrase b: the same words, or b's words
-// followed by more. Case and punctuation don't count.
-const words = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-const covers = (a, b) => words(a) === words(b) || words(a).startsWith(words(b) + " ");
+const mic = speech.listener(dictation, {
+  onChange: reparse,
+  onInterim: (said) => { $("mic-said").textContent = said; },
+  onState: (on) => {
+    $("mic").classList.toggle("on", on);
+    $("mic-label").textContent = on ? "Stop" : "Start speaking";
+  },
+  onError: (message) => toast(message, "err"),
+});
+const stopListening = () => mic.stop();
 
-function paintMic() {
-  $("mic").classList.toggle("on", listening);
-  $("mic-label").textContent = listening ? "Stop" : "Start speaking";
-  if (!listening) $("mic-said").textContent = "";
-}
-
-function startListening() {
-  if (!SpeechRec || listening) return;
-  recogniser = new SpeechRec();
-  recogniser.lang = "en-GB";
-  recogniser.continuous = true;
-  recogniser.interimResults = true;
-  // Chrome on Android re-sends earlier phrases as new final results, either
-  // repeated word for word or growing ("joint", "joint get", "joint get hand
-  // soap"). Appending each one made several copies of one task, so the
-  // session's text is rebuilt from all its results every time, with a
-  // phrase that repeats or extends the one before it replacing that one.
-  let before = "";
-  recogniser.onstart = () => { before = dictation.value.trimEnd(); };
-  recogniser.onresult = (event) => {
-    const lines = [];
-    let interim = "";
-    for (const result of event.results) {
-      const said = result[0].transcript.trim();
-      if (!said) continue;
-      if (!result.isFinal) { interim = said; continue; }
-      const last = lines.at(-1) ?? before.split("\n").at(-1).trim();
-      if (last && covers(last, said)) continue;
-      if (lines.length && covers(said, last)) lines[lines.length - 1] = said;
-      else lines.push(said);
-    }
-    const text = [before, ...lines].filter(Boolean).join("\n");
-    if (text !== dictation.value.trimEnd()) {
-      dictation.value = text;
-      reparse();
-    }
-    $("mic-said").textContent = interim;
-  };
-  recogniser.onerror = (event) => {
-    if (event.error === "aborted" || event.error === "no-speech") return;
-    stopListening();
-    toast(event.error === "not-allowed"
-      ? "Microphone access is off. Turn it on for this site in Safari’s settings."
-      : `Speech didn’t work (${event.error}). Use the keyboard microphone instead.`, "err");
-  };
-  // A pause ends the session on iOS, so pick it straight back up.
-  recogniser.onend = () => { if (listening) { try { recogniser.start(); } catch { /* already going */ } } };
-  try {
-    recogniser.start();
-    listening = true;
-  } catch {
-    toast("Couldn’t start the microphone", "err");
-  }
-  paintMic();
-}
-
-function stopListening() {
-  listening = false;
-  try { recogniser?.stop(); } catch { /* already stopped */ }
-  paintMic();
-}
-
-if (SpeechRec) {
+if (speech.supported) {
   $("mic").hidden = false;
   $("mic-said").hidden = false;
-  $("mic").addEventListener("click", () => (listening ? stopListening() : startListening()));
+  $("mic").addEventListener("click", () => (mic.listening ? mic.stop() : mic.start()));
 }
 
 // ─── Tasks already in Craft ──────────────────────────────────────────

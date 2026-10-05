@@ -26,8 +26,7 @@ Both are stored in the browser on that device only and never in this repo: the C
 
 - `index.html`: the page and its styles
 - `app.js`: settings, the review list, and sending to Craft
-- `parse.js`: turns dictated text into tasks (no browser or Craft dependency)
-- `todoist.js`: the Todoist side: projects, tasks, adding and closing
+- shared with calendar., from `lifeos/shared/`: `parse.js` (dictated text into tasks), `todoist.js` (the Todoist side) and `speech.js` (speaking into the page)
 - `calendar.js`: Google sign-in and calendar.'s time blocks: reading, making and moving them
 
 A static site with no build step, hosted on GitHub Pages. GitHub Pages lets browsers keep each file for ten minutes, so the page and every module it loads carry one release number (`?v=N`). Run `./bump.sh` before each commit to raise it everywhere, and a reopened app fetches the new code straight away.
