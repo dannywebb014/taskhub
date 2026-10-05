@@ -431,7 +431,7 @@ async function reschedule(task, date, row) {
   task.date = date;
   row.querySelector(".when-text").textContent = dateText(date);
   try {
-    if (isTodoist(task.spaceId)) await todoist.rescheduleTask(task.id, date);
+    if (isTodoist(task.spaceId)) await todoist.rescheduleTask(task, date);
     else await craft(task.spaceId, "/tasks", {
       method: "PUT",
       body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { scheduleDate: date } }] }),
@@ -646,7 +646,7 @@ async function moveToTomorrow(list, btn) {
   const errors = [];
   await Promise.all([...groups].map(async ([spaceId, tasks]) => {
     if (isTodoist(spaceId)) {
-      await Promise.all(tasks.map(task => todoist.rescheduleTask(task.id, date)
+      await Promise.all(tasks.map(task => todoist.rescheduleTask(task, date)
         .then(() => { task.date = date; moved++; })
         .catch(err => errors.push(err))));
       return;

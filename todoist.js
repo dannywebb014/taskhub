@@ -67,6 +67,8 @@ export async function loadTasks(projects) {
       // A due date can carry a time; only the day matters here.
       date: (t.due?.date || "").slice(0, 10) || null,
       recurring: Boolean(t.due?.is_recurring),
+      // Kept whole so a recurring task can be moved without losing its rule.
+      due: t.due || null,
       spaceId: "todoist",
       where: { key: `p:${t.project_id}`, label: names.get(String(t.project_id)) || "Todoist", rank: 2 },
     }));
@@ -74,8 +76,29 @@ export async function loadTasks(projects) {
 
 export const closeTask = (id) => call(`/tasks/${id}/close`, { method: "POST" });
 
-export const rescheduleTask = (id, date) =>
-  call(`/tasks/${id}`, { method: "POST", body: JSON.stringify({ due_date: date }) });
+// A plain due_date replaces the whole due object, which wipes a recurring
+// task's rule ("every Monday"). For those, send the full due object through
+// /sync instead: the new date plus the original rule string, which moves this
+// occurrence and keeps the series. Any time of day is carried over too.
+export async function rescheduleTask(task, date) {
+  const due = task.due;
+  if (!due?.is_recurring) {
+    return call(`/tasks/${task.id}`, { method: "POST", body: JSON.stringify({ due_date: date }) });
+  }
+  const time = String(due.date || "").slice(10); // "" or "T09:00:00" / "T09:00:00Z"
+  const next = { ...due, date: date + time };
+  const uuid = crypto.randomUUID();
+  const result = await call("/sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      commands: JSON.stringify([{ type: "item_update", uuid, args: { id: task.id, due: next } }]),
+    }),
+  });
+  const status = result?.sync_status?.[uuid];
+  if (status !== "ok") throw new Error(status?.error || "Todoist didn’t accept the new date.");
+  task.due = next;
+}
 
 export const renameTask = (id, text) =>
   call(`/tasks/${id}`, { method: "POST", body: JSON.stringify({ content: text }) });
