@@ -494,7 +494,8 @@ async function loadCraftTasks() {
             // Any checkbox prefix Craft sent, so a rename goes back in the same shape.
             prefix: (markdown.match(/^\s*[-*]\s*\[[ x]\]\s*/) || [""])[0],
             date: item.taskInfo?.scheduleDate || null,
-            recurring: Boolean(item.taskInfo?.repeat),
+            // The task list puts repeat beside taskInfo, not in it as edits do.
+            recurring: Boolean(item.repeat || item.taskInfo?.repeat),
             spaceId: space.id,
             where: placeOf(item.location),
           });
