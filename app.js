@@ -1,8 +1,8 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=14";
-import * as todoist from "/lifeos/shared/todoist.js?v=14";
-import * as gcal from "./calendar.js?v=14";
-import * as speech from "/lifeos/shared/speech.js?v=14";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=15";
+import * as todoist from "/lifeos/shared/todoist.js?v=15";
+import * as gcal from "./calendar.js?v=15";
+import * as speech from "/lifeos/shared/speech.js?v=15";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -905,6 +905,12 @@ function openWhen(task, row) {
 }
 
 $("when-clear").addEventListener("click", () => { whenTime.value = ""; whenDialog.close("save"); });
+// Enter would submit through the form's first button, Cancel, so it saves.
+for (const f of [whenDate, whenTime]) f.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  whenDialog.close("save");
+});
 whenDialog.addEventListener("close", () => {
   const open = whenFor;
   whenFor = null;
