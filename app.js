@@ -1,8 +1,9 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=15";
-import * as todoist from "/lifeos/shared/todoist.js?v=15";
-import * as gcal from "./calendar.js?v=15";
-import * as speech from "/lifeos/shared/speech.js?v=15";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=16";
+import * as todoist from "/lifeos/shared/todoist.js?v=16";
+import * as gcal from "./calendar.js?v=16";
+import * as speech from "/lifeos/shared/speech.js?v=16";
+import * as hub from "/lifeos/shared/hubtasks.js?v=16";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -37,6 +38,9 @@ function apiBase(url) {
   return m ? `https://${m[1]}/api/v1` : u.replace(/\/+$/, "");
 }
 const isConfigured = (id) => isTodoist(id) ? Boolean(settings.todoist?.token) : Boolean(settings.spaces[id]?.url);
+// A space with no Craft or Todoist connection on this device keeps its tasks
+// in lifeOS (lifeos/shared/hubtasks.js), so every space can always take tasks.
+const inLifeos = (id) => hub.sourceOf(settings, id) === "lifeos";
 // The Craft space ID from the last test is kept only while the URL is unchanged.
 function withConfig(id, url, key) {
   const prev = settings.spaces[id] || {};
@@ -125,8 +129,8 @@ function render() {
     const text = el.querySelector(".task-text");
     text.value = t.text;
     text.addEventListener("input", () => { t.text = text.value; sendBtn.disabled = tasks.some(x => !x.text.trim()); });
-    el.querySelector("[data-act=space]").textContent = spaceLabel(t.space) + (isConfigured(t.space) ? "" : " · not set up");
-    if (isTodoist(t.space) && t.project) {
+    el.querySelector("[data-act=space]").textContent = spaceLabel(t.space);
+    if (isTodoist(t.space) && !inLifeos(t.space) && t.project) {
       const chip = document.createElement("span");
       chip.className = "chip";
       chip.textContent = t.project.name;
@@ -200,19 +204,16 @@ function toast(msg, kind = "ok") {
 sendBtn.addEventListener("click", async () => {
   stopListening();
   dictation.blur();
-  const missing = [...new Set(tasks.map(t => t.space))].filter(id => !isConfigured(id));
-  if (missing.length) {
-    toast(`Set up ${missing.map(spaceLabel).join(" and ")} first`, "err");
-    openSettings();
-    return;
-  }
   sendBtn.disabled = true;
   sendBtn.textContent = "Adding…";
 
   // One request per space. A space that fails keeps its tasks on screen so
   // nothing is lost; the ones that went through are removed.
   const bySpace = new Map();
-  for (const t of tasks) bySpace.set(t.space, [...(bySpace.get(t.space) || []), t]);
+  for (const t of tasks) {
+    const key = inLifeos(t.space) ? "lifeos" : t.space;
+    bySpace.set(key, [...(bySpace.get(key) || []), t]);
+  }
   const failed = [];
   let added = 0;
   // Tasks given a time, each with its new ID where the API handed one back.
@@ -220,7 +221,11 @@ sendBtn.addEventListener("click", async () => {
   const owe = (t, id, spaceId) => { if (t.time && t.date) timed.push({ id: id ? String(id) : null, text: t.text.trim(), spaceId, date: t.date, time: t.time, minutes: t.minutes || gcal.DEFAULT_MINUTES }); };
   for (const [spaceId, group] of bySpace) {
     try {
-      if (isTodoist(spaceId)) {
+      if (spaceId === "lifeos") {
+        // Every space kept in lifeOS goes in one request.
+        const made = await hub.addTasks(group.map(t => ({ text: t.text, date: t.date, spaceId: t.space })));
+        group.forEach((t, i) => owe(t, made[i]?.id, t.space));
+      } else if (isTodoist(spaceId)) {
         // Todoist adds one task per call, each to the project named in the
         // dictation or, failing that, the shared list.
         for (const t of group) {
@@ -247,7 +252,7 @@ sendBtn.addEventListener("click", async () => {
       added += group.length;
     } catch (err) {
       console.error(`Adding to ${spaceLabel(spaceId)} failed:`, err);
-      failed.push({ spaceId, group, message: err instanceof TypeError ? `couldn’t reach ${isTodoist(spaceId) ? "Todoist" : "Craft"}` : err.message });
+      failed.push({ spaceId, group, message: err instanceof TypeError ? `couldn’t reach ${spaceId === "lifeos" ? "lifeOS" : isTodoist(spaceId) ? "Todoist" : "Craft"}` : err.message });
     }
   }
 
@@ -259,7 +264,7 @@ sendBtn.addEventListener("click", async () => {
   if (!failed.length) {
     toast(`Added ${added} task${added === 1 ? "" : "s"}`);
   } else {
-    const why = failed.map(f => `${spaceLabel(f.spaceId)}: ${f.message}`).join("; ");
+    const why = failed.map(f => `${f.spaceId === "lifeos" ? "lifeOS" : spaceLabel(f.spaceId)}: ${f.message}`).join("; ");
     toast(`${added ? `Added ${added}, but ` : ""}couldn’t add to ${why}`, "err");
   }
   render();
@@ -432,7 +437,6 @@ async function undatedDocTasks(spaceId) {
 
 async function loadCraftTasks() {
   const spaces = SPACES.filter(s => !isTodoist(s.id) && isConfigured(s.id));
-  if (!spaces.length) { craftTasks = []; renderCraftTasks(); return; }
   loadingTasks = true;
   renderCraftTasks();
   const blocksJob = loadBlocks();
@@ -469,6 +473,10 @@ async function loadCraftTasks() {
       failed.push(spaceLabel(space.id));
     }
   });
+  // Tasks kept in lifeOS show whatever is connected here.
+  jobs.push(hub.loadTasks()
+    .then(list => { for (const task of list) found.set(task.id, task); })
+    .catch(err => { console.error("Loading lifeOS tasks failed:", err); failed.push("lifeOS"); }));
   if (isConfigured("todoist")) {
     jobs.push((async () => {
       try {
@@ -496,7 +504,8 @@ async function reschedule(task, date, row) {
   task.date = date;
   row.querySelector(".when-text").textContent = dateText(date);
   try {
-    if (isTodoist(task.spaceId)) await todoist.rescheduleTask(task, date);
+    if (task.builtin) await hub.rescheduleTask(task.id, date);
+    else if (isTodoist(task.spaceId)) await todoist.rescheduleTask(task, date);
     else await craft(task.spaceId, "/tasks", {
       method: "PUT",
       body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { scheduleDate: date } }] }),
@@ -511,7 +520,7 @@ async function reschedule(task, date, row) {
     renderCraftTasks();
     toast(/scope/i.test(err.message)
       ? scopeHelp(task.spaceId)
-      : err instanceof TypeError ? "Couldn’t reach Craft or Todoist" : `Couldn’t change the date: ${err.message}`, "err");
+      : err instanceof TypeError ? "Couldn’t reach Craft, Todoist or lifeOS" : `Couldn’t change the date: ${err.message}`, "err");
     return false;
   }
 }
@@ -519,7 +528,8 @@ async function reschedule(task, date, row) {
 async function completeTask(task, row) {
   row.classList.add("done");
   try {
-    if (isTodoist(task.spaceId)) await todoist.closeTask(task.id);
+    if (task.builtin) await hub.closeTask(task.id);
+    else if (isTodoist(task.spaceId)) await todoist.closeTask(task.id);
     else await craft(task.spaceId, "/tasks", {
       method: "PUT",
       body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { state: "done" } }] }),
@@ -532,7 +542,7 @@ async function completeTask(task, row) {
   } catch (err) {
     console.error("Completing task failed:", err);
     row.classList.remove("done");
-    toast(err instanceof TypeError ? "Couldn’t reach Craft or Todoist"
+    toast(err instanceof TypeError ? "Couldn’t reach Craft, Todoist or lifeOS"
       : /scope/i.test(err.message) ? scopeHelp(task.spaceId)
       : `Couldn’t tick that off: ${err.message}`, "err");
   }
@@ -544,7 +554,8 @@ async function renameTask(task, text) {
   task.text = text;
   renderCraftTasks();
   try {
-    if (isTodoist(task.spaceId)) await todoist.renameTask(task.id, text);
+    if (task.builtin) await hub.renameTask(task.id, text);
+    else if (isTodoist(task.spaceId)) await todoist.renameTask(task.id, text);
     else await craft(task.spaceId, "/tasks", {
       method: "PUT",
       body: JSON.stringify({ tasksToUpdate: [{ id: task.id, markdown: (task.prefix || "") + text }] }),
@@ -554,7 +565,7 @@ async function renameTask(task, text) {
     console.error("Renaming failed:", err);
     task.text = was;
     renderCraftTasks();
-    toast(err instanceof TypeError ? "Couldn’t reach Craft or Todoist"
+    toast(err instanceof TypeError ? "Couldn’t reach Craft, Todoist or lifeOS"
       : /scope/i.test(err.message) ? scopeHelp(task.spaceId)
       : `Couldn’t rename it: ${err.message}`, "err");
   }
@@ -601,25 +612,19 @@ const scopeHelp = (spaceId) =>
 function renderCraftTasks() {
   const box = $("craft-tasks");
   const title = $("craft-title");
-  const ready = SPACES.some(s => isConfigured(s.id));
-  $("refresh").hidden = !ready;
-  $("craft-head").hidden = !ready && !craftTasks.length;
   title.textContent = "";
-  if (!ready) {
-    box.innerHTML = `<p class="empty">Set up a Craft connection to see your tasks here.</p>`;
-    return;
-  }
   if (loadingTasks && !craftTasks.length) {
     box.innerHTML = `<p class="loading">Loading your tasks…</p>`;
     return;
   }
   if (!craftTasks.length) {
-    box.innerHTML = `<p class="empty">Nothing to do. Either you’re all caught up, or everything is scheduled further ahead.</p>`;
+    box.innerHTML = `<p class="empty">Nothing to do. Type or speak a task above to add one.</p>`;
     return;
   }
   // Anything overdue belongs with today: it still needs doing today.
   const due = (t) => { const d = dayDiff(t.date); return d !== null && d <= 0; };
-  const spaces = SPACES.filter(s => isConfigured(s.id));
+  // Every space can hold tasks now, so each gets a filter chip.
+  const spaces = SPACES;
   const shown = craftTasks.filter(t => spaces.length < 2 || !hiddenSpaces.has(t.spaceId));
   if (spaces.length > 1) title.replaceChildren(filterRow(spaces));
   box.replaceChildren(
@@ -708,12 +713,23 @@ async function moveToTomorrow(list, btn) {
   btn.textContent = "Moving…";
   const groups = new Map();
   for (const task of movable) {
-    if (!groups.has(task.spaceId)) groups.set(task.spaceId, []);
-    groups.get(task.spaceId).push(task);
+    const key = task.builtin ? "lifeos" : task.spaceId;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(task);
   }
   let moved = 0;
   const errors = [];
   await Promise.all([...groups].map(async ([spaceId, tasks]) => {
+    if (spaceId === "lifeos") {
+      try {
+        await hub.rescheduleTask(tasks.map(t => t.id), date);
+        tasks.forEach(t => { t.date = date; });
+        moved += tasks.length;
+      } catch (err) {
+        errors.push(err);
+      }
+      return;
+    }
     if (isTodoist(spaceId)) {
       await Promise.all(tasks.map(task => todoist.rescheduleTask(task, date)
         .then(() => { task.date = date; moved++; })
@@ -737,14 +753,14 @@ async function moveToTomorrow(list, btn) {
     console.error("Moving tasks to tomorrow failed:", errors);
     const err = errors[0];
     toast(`${moved ? `Moved ${moved}, but some` : "The tasks"} couldn’t be moved: ${
-      err instanceof TypeError ? "couldn’t reach Craft or Todoist" : err.message}`, "err");
+      err instanceof TypeError ? "couldn’t reach Craft, Todoist or lifeOS" : err.message}`, "err");
   } else {
     toast(`Moved ${moved} task${moved === 1 ? "" : "s"} to tomorrow${skipped ? ` · ${skipped} locked left as is` : ""}`);
   }
 }
 
 const isLocked = (task) =>
-  !isTodoist(task.spaceId) && task.where.rank === 2 && canEditDocs[task.spaceId] === false;
+  !task.builtin && !isTodoist(task.spaceId) && task.where.rank === 2 && canEditDocs[task.spaceId] === false;
 
 function taskRow(task) {
   const row = document.createElement("div");
@@ -755,7 +771,8 @@ function taskRow(task) {
       <button type="button" class="t-when${isLate(task) ? " late" : ""}${task.date ? "" : " none"}" aria-label="Change the date or time">
         <span class="when-text">${esc(whenText(task))}</span>
       </button>
-      ${isTodoist(task.spaceId) ? `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><span>${esc(task.where.label)}</span></button>`
+      ${task.builtin ? (task.shared ? `<span class="t-doc">shared</span>` : "")
+        : isTodoist(task.spaceId) ? `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><span>${esc(task.where.label)}</span></button>`
         : `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>${esc(task.where.label)}</span></button>`}
       ${task.recurring ? `<span class="t-rep" title="Repeats" aria-label="Repeats"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>` : ""}
     </div></div>`;
@@ -766,7 +783,7 @@ function taskRow(task) {
   row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);
   row.querySelector(".t-text").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : editText(task, row);
   const doc = row.querySelector("button.t-doc");
-  doc.onclick = () => !isTodoist(task.spaceId) && canEditDocs[task.spaceId] === false ? toast(scopeHelp(task.spaceId), "err") : openMove(task);
+  if (doc) doc.onclick = () => !isTodoist(task.spaceId) && canEditDocs[task.spaceId] === false ? toast(scopeHelp(task.spaceId), "err") : openMove(task);
   return row;
 }
 
@@ -871,7 +888,7 @@ async function moveTask(task, dest) {
     console.error("Moving the task failed:", err);
     task.where = was;
     renderCraftTasks();
-    toast(err instanceof TypeError ? "Couldn’t reach Craft or Todoist"
+    toast(err instanceof TypeError ? "Couldn’t reach Craft, Todoist or lifeOS"
       : /scope/i.test(err.message) ? scopeHelp(task.spaceId)
       : `Couldn’t move it: ${err.message}`, "err");
   }
@@ -1136,4 +1153,3 @@ if (back?.error && gcal.pending().length) {
 
 render();
 loadCraftTasks().then(placePending);
-if (!SPACES.some(s => isConfigured(s.id))) openSettings();

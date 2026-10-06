@@ -1,6 +1,6 @@
 # tasks.
 
-Speak your tasks on your phone and send them to Craft.
+Speak or type your tasks on your phone. They're kept in lifeOS and show on every device you sign in on, or go to Craft or Todoist for a space you've connected.
 
 Open the page, tap the text box, use the keyboard microphone, and say something like:
 
@@ -13,6 +13,8 @@ In the list of existing tasks, a task blocked out in calendar. shows its time ne
 Say **"joint"** to send a task to Todoist instead of Craft, for lists shared with people who don't use Craft. Naming a project first puts it there: "joint house fix the gate" goes to the House project; anything else goes to Joint Reminders.
 
 ## Setup
+
+None needed: with nothing connected, every space keeps its tasks in lifeOS (`lifeos/shared/hubtasks.js`, which needs `lifeos/sql/tasks.sql` run once). joint. tasks are shared with everyone in your food. household. Connecting a space below sends its new tasks there instead; tasks already in lifeOS still show.
 
 In Craft, open **Imagine**, create an **All Documents** API connection for each space, and paste its API URL into the page's settings. A "Daily Notes and Tasks" connection can read every task but can only tick off the ones in the inbox and daily notes.
 
