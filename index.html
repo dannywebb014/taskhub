@@ -214,11 +214,10 @@
     .t-space.work { color:var(--work); }
     .t-space.todoist { color:var(--joint); }
     .t-space.my { color:var(--accent-text); }
-    .t-when { position:relative; display:inline-flex; align-items:center; padding:2px 7px; margin:-2px 0; border-radius:9px; background:var(--input); cursor:pointer; }
+    .t-when { position:relative; display:inline-flex; align-items:center; padding:2px 7px; margin:-2px 0; border:none; border-radius:9px; background:var(--input); font-size:inherit; cursor:pointer; }
     .t-when.late { color:var(--danger); font-weight:600; }
     .t-when.none { color:var(--dim); }
     .t-rep { display:inline-flex; color:var(--dim); margin:0 -2px; }
-    .t-when input[type=date] { position:absolute; inset:0; width:100%; height:100%; opacity:0; border:none; cursor:pointer; }
     .t-date.late { color:var(--danger); font-weight:600; }
     .loading { color:var(--dim); font-size:14px; text-align:center; padding:14px 0; }
 
@@ -266,6 +265,10 @@
     .test-result.ok { color:var(--success); }
     .test-result.err { color:var(--danger); }
     .dlg-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
+    .when-fields { display:flex; gap:8px; margin-bottom:14px; }
+    .when-fields > div { flex:1; min-width:0; }
+    .when-fields label.f { margin-top:0; }
+    .dlg-foot .no-time { margin-right:auto; }
     .dlg-foot .primary { width:auto; height:42px; padding:0 20px; font-size:15px; box-shadow:none; }
   </style>
 </head>
@@ -337,8 +340,25 @@
     </form>
   </dialog>
 
+  <dialog id="when">
+    <form method="dialog" class="dlg">
+      <h2>When</h2>
+      <p class="sub" id="when-task"></p>
+      <div class="when-fields">
+        <div><label class="f" for="when-date">Date</label><input class="field" id="when-date" type="date"></div>
+        <div><label class="f" for="when-time">Time</label><input class="field" id="when-time" type="time"></div>
+      </div>
+      <p class="note" id="when-note"></p>
+      <div class="dlg-foot">
+        <button class="btn no-time" id="when-clear" type="button">No time</button>
+        <button class="btn" value="cancel">Cancel</button>
+        <button class="primary" value="save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- The version is bumped on each release so a phone holding the page in
        its cache still fetches the new code. -->
-  <script type="module" src="app.js?v=13"></script>
+  <script type="module" src="app.js?v=14"></script>
 </body>
 </html>

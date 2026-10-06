@@ -177,15 +177,21 @@ export async function createBlock(task, date, time, minutes = DEFAULT_MINUTES) {
   return toBlock(e);
 }
 
-// A task moved to another day takes its block along, at the same time.
-export async function moveBlock(block, date) {
-  const start = at(date, hhmm(block.start));
+// A task moved to another day takes its block along, at the same time
+// unless it is given a new one, keeping the block's length.
+export async function moveBlock(block, date, time = hhmm(block.start)) {
+  const start = at(date, time);
   const end = new Date(start.getTime() + (block.end - block.start));
   const e = await api(`/calendars/primary/events/${encodeURIComponent(block.id)}`, {
     method: "PATCH",
     body: { start: { dateTime: start.toISOString(), timeZone: zone() }, end: { dateTime: end.toISOString(), timeZone: zone() } },
   });
   return toBlock(e);
+}
+
+// A task's time taken away: its block goes, as calendar. removes one.
+export async function deleteBlock(block) {
+  await api(`/calendars/primary/events/${encodeURIComponent(block.id)}`, { method: "DELETE" });
 }
 
 // Blocks waiting for a sign-in: the task is already added, so only the

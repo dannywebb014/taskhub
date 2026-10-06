@@ -1,8 +1,8 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=13";
-import * as todoist from "/lifeos/shared/todoist.js?v=13";
-import * as gcal from "./calendar.js?v=13";
-import * as speech from "/lifeos/shared/speech.js?v=13";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=14";
+import * as todoist from "/lifeos/shared/todoist.js?v=14";
+import * as gcal from "./calendar.js?v=14";
+import * as speech from "/lifeos/shared/speech.js?v=14";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -504,6 +504,7 @@ async function reschedule(task, date, row) {
     await followTask(task, date);
     toast(`${task.text} → ${whenText(task)}`);
     renderCraftTasks();
+    return true;
   } catch (err) {
     console.error("Changing the date failed:", err);
     task.date = was;
@@ -511,6 +512,7 @@ async function reschedule(task, date, row) {
     toast(/scope/i.test(err.message)
       ? scopeHelp(task.spaceId)
       : err instanceof TypeError ? "Couldn’t reach Craft or Todoist" : `Couldn’t change the date: ${err.message}`, "err");
+    return false;
   }
 }
 
@@ -747,23 +749,18 @@ const isLocked = (task) =>
 function taskRow(task) {
   const row = document.createElement("div");
   row.className = "t-row";
-  // The date is a label wrapping a real date input, so tapping it opens the
-  // phone's own picker rather than a home-made one.
   row.innerHTML = `<button class="tick" aria-label="Tick off"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
     <div class="t-body"><div class="t-text"></div><div class="t-meta">
       <span class="t-space ${task.spaceId}"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</span>
-      <label class="t-when${isLate(task) ? " late" : ""}${task.date ? "" : " none"}">
+      <button type="button" class="t-when${isLate(task) ? " late" : ""}${task.date ? "" : " none"}" aria-label="Change the date or time">
         <span class="when-text">${esc(whenText(task))}</span>
-        <input type="date" aria-label="Scheduled date">
-      </label>
+      </button>
       ${isTodoist(task.spaceId) ? `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><span>${esc(task.where.label)}</span></button>`
         : `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>${esc(task.where.label)}</span></button>`}
       ${task.recurring ? `<span class="t-rep" title="Repeats" aria-label="Repeats"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>` : ""}
     </div></div>`;
   row.querySelector(".t-text").textContent = task.text || "(no text)";
-  const when = row.querySelector("input[type=date]");
-  when.value = task.date || "";
-  when.onchange = () => { if (when.value) reschedule(task, when.value, row); };
+  row.querySelector(".t-when").onclick = () => openWhen(task, row);
   const locked = isLocked(task);
   row.classList.toggle("locked", locked);
   row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);
@@ -884,6 +881,65 @@ $("refresh").addEventListener("click", () => {
   for (const id in docLists) delete docLists[id];
   loadCraftTasks();
 });
+
+// ─── Changing a task's date and time ─────────────────────────────────
+// Tapping a task's date opens this. The date is the task's own, in Craft or
+// Todoist; the time is its block on the calendar (see Time blocks), so
+// setting one needs Google Calendar connected, and a time with no date
+// means today.
+const whenDialog = $("when");
+const whenDate = $("when-date");
+const whenTime = $("when-time");
+let whenFor = null;   // { task, row } the dialog is open for
+
+function openWhen(task, row) {
+  finishEdit?.(true);
+  whenFor = { task, row };
+  $("when-task").textContent = task.text;
+  whenDate.value = task.date || "";
+  whenTime.value = timeOf(task);
+  $("when-clear").hidden = !timeOf(task);
+  $("when-note").textContent = gcal.isConnected() || gcal.wasConnected() ? ""
+    : "A time is blocked out on Google Calendar. Connect it in settings first.";
+  whenDialog.showModal();
+}
+
+$("when-clear").addEventListener("click", () => { whenTime.value = ""; whenDialog.close("save"); });
+whenDialog.addEventListener("close", () => {
+  const open = whenFor;
+  whenFor = null;
+  if (open && whenDialog.returnValue === "save") setWhen(open.task, open.row, whenDate.value, whenTime.value);
+  whenDialog.returnValue = "";
+});
+
+async function setWhen(task, row, date, time) {
+  if (time && !date) date = isoDay(new Date());
+  if (date && date !== task.date && !(await reschedule(task, date, row))) return;
+  if (!task.date || time === timeOf(task)) return;
+  const b = blocks.get(task.id);
+  if (!time) {
+    try {
+      await gcal.deleteBlock(b);
+      blocks.delete(task.id);
+      toast(`${task.text} → ${whenText(task)}`);
+    } catch (err) {
+      console.error("Removing the time block failed:", err);
+      toast(`Couldn’t remove the time: ${err.message}`, "err");
+    }
+  } else if (b) {
+    try {
+      blocks.set(task.id, await gcal.moveBlock(b, task.date, time));
+      toast(`${task.text} → ${whenText(task)}`);
+    } catch (err) {
+      console.error("Changing the time failed:", err);
+      toast(`Couldn’t change the time: ${err.message}`, "err");
+    }
+  } else {
+    // placeBlocks waits for a sign-in when there isn't one, and toasts itself.
+    return placeBlocks([{ id: String(task.id), text: task.text, spaceId: task.spaceId, date: task.date, time, minutes: gcal.DEFAULT_MINUTES }]);
+  }
+  renderCraftTasks();
+}
 
 // ─── Settings dialog ─────────────────────────────────────────────────
 // Craft has three kinds of API connection and only two can manage tasks:
