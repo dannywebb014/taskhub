@@ -232,8 +232,11 @@
     .chip.prio.p2 { color:var(--p2); } .chip.prio.p2 .light { background:var(--p2); border-color:var(--p2); }
     .chip.prio.p1 { color:var(--p1); } .chip.prio.p1 .light { background:var(--p1); border-color:var(--p1); }
     .prio-opts { display:grid; gap:8px; margin-bottom:14px; }
-    .chip.filter.high[aria-pressed=true] { color:var(--p3); background:color-mix(in srgb, var(--p3) 12%, transparent); border-color:transparent; }
-    .chip.filter.high .light { width:8px; height:8px; border-radius:50%; background:var(--p3); }
+    /* "High only" is just the red light: dim when off, lit when on. */
+    .chip.filter.high { width:30px; padding:0; justify-content:center; }
+    .chip.filter.high .light { width:12px; height:12px; border-radius:50%; background:var(--p3); opacity:.35; transition:opacity .15s, box-shadow .15s; }
+    .chip.filter.high[aria-pressed=true] { background:color-mix(in srgb, var(--p3) 14%, transparent); border-color:transparent; }
+    .chip.filter.high[aria-pressed=true] .light { opacity:1; box-shadow:0 0 0 3px color-mix(in srgb, var(--p3) 25%, transparent); }
     button.t-space { border:none; background:none; padding:0; font:inherit; cursor:pointer; }
     .t-rep { cursor:default; }
     .repeat-preview { font-size:13px; color:var(--muted); margin:6px 2px 0; min-height:1.2em; }
@@ -443,6 +446,6 @@
 
   <!-- The version is bumped on each release so a phone holding the page in
        its cache still fetches the new code. -->
-  <script type="module" src="app.js?v=20"></script>
+  <script type="module" src="app.js?v=21"></script>
 </body>
 </html>

@@ -1,11 +1,11 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=20";
-import * as todoist from "/lifeos/shared/todoist.js?v=20";
-import * as gcal from "./calendar.js?v=20";
-import * as speech from "/lifeos/shared/speech.js?v=20";
-import * as hub from "/lifeos/shared/hubtasks.js?v=20";
-import * as rep from "/lifeos/shared/repeat.js?v=20";
-import { pullToRefresh } from "/lifeos/shared/pull.js?v=20";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=21";
+import * as todoist from "/lifeos/shared/todoist.js?v=21";
+import * as gcal from "./calendar.js?v=21";
+import * as speech from "/lifeos/shared/speech.js?v=21";
+import * as hub from "/lifeos/shared/hubtasks.js?v=21";
+import * as rep from "/lifeos/shared/repeat.js?v=21";
+import { pullToRefresh } from "/lifeos/shared/pull.js?v=21";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -793,7 +793,9 @@ function filterRow(spaces) {
   const high = document.createElement("button");
   high.className = "chip filter high";
   high.setAttribute("aria-pressed", highOnly);
-  high.innerHTML = `<span class="light"></span>high only`;
+  high.innerHTML = `<span class="light"></span>`;
+  high.setAttribute("aria-label", "High priority only");
+  high.title = "High priority only";
   high.onclick = () => {
     highOnly = !highOnly;
     try { localStorage.setItem("tasks.highOnly", highOnly ? "1" : ""); } catch { /* private mode */ }
