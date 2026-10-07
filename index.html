@@ -197,6 +197,19 @@
     .space-head.my { color:var(--accent-text); }
     .t-row { display:flex; align-items:flex-start; gap:11px; padding:9px 2px; border-bottom:1px solid var(--border); }
     .t-row:last-child { border-bottom:none; }
+    /* Swiping a task: right ticks it off, left moves it to tomorrow. The row's
+       contents slide over a label saying which. */
+    .t-row { position:relative; touch-action:pan-y; }
+    .t-row > * { position:relative; z-index:1; transform:translateX(var(--dx, 0px)); transition:transform .2s ease; }
+    .t-row.swiping > * { transition:none; }
+    .t-row::before { position:absolute; inset:0; z-index:0; display:flex; align-items:center; padding:0 14px; border-radius:10px;
+      font-size:14px; font-weight:600; opacity:0; transition:opacity .15s; pointer-events:none; content:""; }
+    .t-row.swipe-r::before { content:"✓ Done"; justify-content:flex-start; background:var(--success-soft); color:var(--success); opacity:1; }
+    .t-row.swipe-l::before { content:"Tomorrow →"; justify-content:flex-end; background:var(--accent-soft); color:var(--accent-text); opacity:1; }
+    .t-row.armed::before { font-weight:800; }
+    .t-row.swipe-r.armed::before { background:color-mix(in srgb, var(--success) 22%, transparent); }
+    .t-row.swipe-l.armed::before { background:color-mix(in srgb, var(--accent) 22%, transparent); }
+    @media (prefers-reduced-motion: reduce) { .t-row > * { transition:none; } }
     .tick {
       width:24px; height:24px; flex-shrink:0; margin-top:1px; border-radius:50%; border:2px solid var(--border);
       background:none; display:flex; align-items:center; justify-content:center; color:transparent; transition:all .15s;
@@ -430,6 +443,6 @@
 
   <!-- The version is bumped on each release so a phone holding the page in
        its cache still fetches the new code. -->
-  <script type="module" src="app.js?v=19"></script>
+  <script type="module" src="app.js?v=20"></script>
 </body>
 </html>

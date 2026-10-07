@@ -1,10 +1,11 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=19";
-import * as todoist from "/lifeos/shared/todoist.js?v=19";
-import * as gcal from "./calendar.js?v=19";
-import * as speech from "/lifeos/shared/speech.js?v=19";
-import * as hub from "/lifeos/shared/hubtasks.js?v=19";
-import * as rep from "/lifeos/shared/repeat.js?v=19";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=20";
+import * as todoist from "/lifeos/shared/todoist.js?v=20";
+import * as gcal from "./calendar.js?v=20";
+import * as speech from "/lifeos/shared/speech.js?v=20";
+import * as hub from "/lifeos/shared/hubtasks.js?v=20";
+import * as rep from "/lifeos/shared/repeat.js?v=20";
+import { pullToRefresh } from "/lifeos/shared/pull.js?v=20";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -932,6 +933,7 @@ function taskRow(task) {
   row.classList.toggle("locked", locked);
   row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);
   row.querySelector(".t-text").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : editText(task, row);
+  swipeable(row, task);
   const doc = row.querySelector("button.t-doc");
   if (doc) doc.onclick = () => !isTodoist(task.spaceId) && canEditDocs[task.spaceId] === false ? toast(scopeHelp(task.spaceId), "err") : openMove(task);
   return row;
@@ -1044,11 +1046,73 @@ async function moveTask(task, dest) {
   }
 }
 
-$("refresh").addEventListener("click", () => {
+function refreshAll() {
   for (const id in docLists) delete docLists[id];
   skipFresh = true;
-  loadCraftTasks();
+  return loadCraftTasks();
+}
+$("refresh").addEventListener("click", refreshAll);
+// Pull down from the top of the page to refresh, unless a box is open.
+pullToRefresh({
+  refresh: refreshAll,
+  enabled: () => !document.querySelector("dialog[open]") && !document.querySelector(".t-edit") && !loadingTasks,
 });
+
+// ─── Swiping a task ──────────────────────────────────────────────────
+// Right past the mark ticks it off (with Undo); left moves it to tomorrow,
+// its time block too. A mostly-vertical drag is left to scroll the page, and
+// a touch starting at the very left edge is left to lifeOS's own handle.
+const SWIPE = 90;
+function swipeable(row, task) {
+  let x0 = null, y0 = 0, dx = 0, sideways = false, pointer = null, swipedAt = 0;
+  const clear = () => {
+    row.classList.remove("swiping", "armed");
+    row.style.setProperty("--dx", "0px");
+    setTimeout(() => row.classList.remove("swipe-r", "swipe-l"), 200);
+  };
+  row.addEventListener("pointerdown", (e) => {
+    if ((e.pointerType === "mouse" && e.button !== 0) || e.target.closest("textarea, input") || e.clientX < 24) return;
+    x0 = e.clientX; y0 = e.clientY; dx = 0; sideways = false; pointer = e.pointerId;
+  });
+  row.addEventListener("pointermove", (e) => {
+    if (x0 === null || e.pointerId !== pointer) return;
+    const mx = e.clientX - x0, my = e.clientY - y0;
+    if (!sideways) {
+      if (Math.abs(mx) > 10 && Math.abs(mx) > Math.abs(my) * 1.5) {
+        sideways = true;
+        row.setPointerCapture?.(pointer);
+        row.classList.add("swiping");
+      } else if (Math.abs(my) > 10) { x0 = null; return; } else return;
+    }
+    dx = mx;
+    row.style.setProperty("--dx", `${dx}px`);
+    row.classList.toggle("swipe-r", dx > 0);
+    row.classList.toggle("swipe-l", dx < 0);
+    row.classList.toggle("armed", Math.abs(dx) > SWIPE);
+  });
+  row.addEventListener("pointerup", () => {
+    if (x0 === null) return;
+    x0 = null;
+    if (!sideways) return;
+    swipedAt = Date.now();
+    clear();
+    if (Math.abs(dx) <= SWIPE) return;
+    if (isLocked(task)) { toast(scopeHelp(task.spaceId), "err"); return; }
+    if (dx > 0) completeTask(task, row);
+    else swipeToTomorrow(task, row);
+  });
+  row.addEventListener("pointercancel", () => { x0 = null; if (sideways) clear(); });
+  // The tap that ends a swipe isn't also a tap on the task's text or date.
+  row.addEventListener("click", (e) => { if (Date.now() - swipedAt < 400) { e.stopPropagation(); e.preventDefault(); } }, true);
+}
+
+async function swipeToTomorrow(task, row) {
+  const d = new Date(startOfToday());
+  d.setDate(d.getDate() + 1);
+  const date = isoDay(d);
+  if (task.date === date) { toast(`${task.text} is already tomorrow`); return; }
+  await reschedule(task, date, row);
+}
 
 // ─── Moving a task kept in lifeOS to another space ───────────────────
 const spaceDialog = $("space-move");
