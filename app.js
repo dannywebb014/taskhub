@@ -1,9 +1,10 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=17";
-import * as todoist from "/lifeos/shared/todoist.js?v=17";
-import * as gcal from "./calendar.js?v=17";
-import * as speech from "/lifeos/shared/speech.js?v=17";
-import * as hub from "/lifeos/shared/hubtasks.js?v=17";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=18";
+import * as todoist from "/lifeos/shared/todoist.js?v=18";
+import * as gcal from "./calendar.js?v=18";
+import * as speech from "/lifeos/shared/speech.js?v=18";
+import * as hub from "/lifeos/shared/hubtasks.js?v=18";
+import * as rep from "/lifeos/shared/repeat.js?v=18";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -122,6 +123,7 @@ function render() {
           <input type="date" aria-label="Schedule date">
           ${t.date ? `<button class="clear" data-act="nodate" aria-label="Remove date">×</button>` : ""}
         </span>
+        ${t.repeat ? `<span class="chip has-date" title="Repeats">↻ <span class="rep-label"></span><button class="clear" data-act="norepeat" aria-label="Stop it repeating">×</button></span>` : ""}
         <button class="chip prio p${t.priority || 0}" data-act="prio" aria-label="Priority, tap to change">${LIGHT}<span>${t.priority ? PRIORITY[t.priority] : "Priority"}</span></button>
         <span class="chip ${t.time ? "has-date" : ""}">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
@@ -154,6 +156,8 @@ function render() {
       t.space = SPACES[(idx + 1) % SPACES.length].id;
       render();
     });
+    if (t.repeat) el.querySelector(".rep-label").textContent = rep.describe(t.repeat);
+    el.querySelector("[data-act=norepeat]")?.addEventListener("click", (e) => { e.stopPropagation(); t.repeat = null; render(); });
     // Taps go high → medium → low → none, the order most tasks are sorted in.
     el.querySelector("[data-act=prio]").addEventListener("click", () => {
       t.priority = [3, 0, 1, 2][t.priority || 0];
@@ -229,22 +233,29 @@ sendBtn.addEventListener("click", async () => {
   const timed = [];
   // Craft tasks given a priority: Craft has none, so lifeOS keeps it.
   const lit = [];
+  // Spaces in Craft, which can't be given a repeat from here.
+  const noRepeat = [];
   const owe = (t, id, spaceId) => { if (t.time && t.date) timed.push({ id: id ? String(id) : null, text: t.text.trim(), spaceId, date: t.date, time: t.time, minutes: t.minutes || gcal.DEFAULT_MINUTES }); };
   for (const [spaceId, group] of bySpace) {
     try {
       if (spaceId === "lifeos") {
         // Every space kept in lifeOS goes in one request.
-        const made = await hub.addTasks(group.map(t => ({ text: t.text, date: t.date, spaceId: t.space, priority: t.priority })));
+        // A date changed by hand restarts the repeat from there.
+        const made = await hub.addTasks(group.map(t => {
+          const r = t.repeat ? rep.withAnchor(t.repeat, t.date) : null;
+          return { text: t.text, date: r ? r.date : t.date, spaceId: t.space, priority: t.priority, repeat: r?.rule || null };
+        }));
         group.forEach((t, i) => owe(t, made[i]?.id, t.space));
       } else if (isTodoist(spaceId)) {
         // Todoist adds one task per call, each to the project named in the
         // dictation or, failing that, the shared list.
         for (const t of group) {
           const project = t.project || todoist.pickProject(t.text.trim(), projects).project;
-          const made = await todoist.addTask({ text: t.text.trim(), date: t.date, projectId: project?.id, priority: t.priority });
+          const made = await todoist.addTask({ text: t.text.trim(), date: t.date, projectId: project?.id, priority: t.priority, repeatText: t.repeat?.text });
           owe(t, made?.id, spaceId);
         }
       } else {
+        if (group.some(t => t.repeat)) noRepeat.push(spaceLabel(spaceId));
         const made = await craft(spaceId, "/tasks", {
           method: "POST",
           body: JSON.stringify({
@@ -276,7 +287,9 @@ sendBtn.addEventListener("click", async () => {
   // Once anything has gone through, re-reading the dictation would bring those
   // tasks back and add them twice, so it is cleared; failures stay in the list.
   if (added) dictation.value = "";
-  if (!failed.length) {
+  if (!failed.length && noRepeat.length) {
+    toast(`Added ${added}. Craft tasks can’t repeat from here, so ${noRepeat.join(" and ")} got them without the repeat.`, "err");
+  } else if (!failed.length) {
     toast(`Added ${added} task${added === 1 ? "" : "s"}`);
   } else {
     const why = failed.map(f => `${f.spaceId === "lifeos" ? "lifeOS" : spaceLabel(f.spaceId)}: ${f.message}`).join("; ");
@@ -400,6 +413,7 @@ const openSections = (() => {
 let loadingTasks = false;
 // Lists switched off in the filter. Kept as the ones hidden, so a list set up
 // later shows by default.
+let highOnly = (() => { try { return localStorage.getItem("tasks.highOnly") === "1"; } catch { return false; } })();
 const hiddenSpaces = new Set((() => {
   try { return JSON.parse(localStorage.getItem("tasks.hidden") || "[]"); } catch { return []; }
 })());
@@ -551,8 +565,17 @@ async function reschedule(task, date, row) {
 async function completeTask(task, row) {
   row.classList.add("done");
   try {
-    if (task.builtin) await hub.closeTask(task.id);
-    else if (isTodoist(task.spaceId)) await todoist.closeTask(task.id);
+    if (task.builtin) {
+      // A repeating one moves to its next date (its time block too) and stays.
+      const { next } = await hub.completeTask(task);
+      if (next) {
+        await followTask(task, next);
+        task.date = next;
+        toast(`${task.text} → next ${dateText(next)}`);
+        setTimeout(renderCraftTasks, 700);
+        return;
+      }
+    } else if (isTodoist(task.spaceId)) await todoist.closeTask(task.id);
     else await craft(task.spaceId, "/tasks", {
       method: "PUT",
       body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { state: "done" } }] }),
@@ -648,7 +671,7 @@ function renderCraftTasks() {
   const due = (t) => { const d = dayDiff(t.date); return d !== null && d <= 0; };
   // Every space can hold tasks now, so each gets a filter chip.
   const spaces = SPACES;
-  const shown = craftTasks.filter(t => spaces.length < 2 || !hiddenSpaces.has(t.spaceId));
+  const shown = craftTasks.filter(t => (spaces.length < 2 || !hiddenSpaces.has(t.spaceId)) && (!highOnly || t.priority === 3));
   if (spaces.length > 1) title.replaceChildren(filterRow(spaces));
   box.replaceChildren(
     fold("today", "today", shown.filter(due), false, moveAllButton),
@@ -676,6 +699,17 @@ function filterRow(spaces) {
     };
     row.append(chip);
   }
+  // Red tasks only, across every list shown.
+  const high = document.createElement("button");
+  high.className = "chip filter high";
+  high.setAttribute("aria-pressed", highOnly);
+  high.innerHTML = `<span class="light"></span>high only`;
+  high.onclick = () => {
+    highOnly = !highOnly;
+    try { localStorage.setItem("tasks.highOnly", highOnly ? "1" : ""); } catch { /* private mode */ }
+    renderCraftTasks();
+  };
+  row.append(high);
   return row;
 }
 
@@ -790,7 +824,8 @@ function taskRow(task) {
   row.className = `t-row${task.priority ? ` p${task.priority}` : ""}`;
   row.innerHTML = `<button class="tick" aria-label="Tick off"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
     <div class="t-body"><div class="t-text"></div><div class="t-meta">
-      <span class="t-space ${task.spaceId}"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</span>
+      ${task.builtin ? `<button type="button" class="t-space ${task.spaceId}" aria-label="In ${esc(spaceLabel(task.spaceId))}, tap to move"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</button>`
+        : `<span class="t-space ${task.spaceId}"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</span>`}
       <button type="button" class="t-prio${task.priority ? ` p${task.priority}` : ""}" aria-label="Priority: ${PRIORITY[task.priority || 0]}, tap to change">${LIGHT}${task.priority ? PRIORITY[task.priority] : ""}</button>
       <button type="button" class="t-when${isLate(task) ? " late" : ""}${task.date ? "" : " none"}" aria-label="Change the date or time">
         <span class="when-text">${esc(whenText(task))}</span>
@@ -798,11 +833,12 @@ function taskRow(task) {
       ${task.builtin ? (task.shared ? `<span class="t-doc">shared</span>` : "")
         : isTodoist(task.spaceId) ? `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><span>${esc(task.where.label)}</span></button>`
         : `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>${esc(task.where.label)}</span></button>`}
-      ${task.recurring ? `<span class="t-rep" title="Repeats" aria-label="Repeats"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>` : ""}
+      ${task.recurring ? `<span class="t-rep" title="${esc(task.repeatText || "Repeats")}" aria-label="${esc(task.repeatText || "Repeats")}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>` : ""}
     </div></div>`;
   row.querySelector(".t-text").textContent = task.text || "(no text)";
   row.querySelector(".t-when").onclick = () => openWhen(task, row);
   row.querySelector(".t-prio").onclick = () => openPriority(task);
+  row.querySelector("button.t-space")?.addEventListener("click", () => openSpaceMove(task));
   const locked = isLocked(task);
   row.classList.toggle("locked", locked);
   row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);
@@ -924,6 +960,37 @@ $("refresh").addEventListener("click", () => {
   loadCraftTasks();
 });
 
+// ─── Moving a task kept in lifeOS to another space ───────────────────
+const spaceDialog = $("space-move");
+let spaceFor = null;
+function openSpaceMove(task) {
+  finishEdit?.(true);
+  spaceFor = task;
+  $("space-move-task").textContent = task.text;
+  spaceDialog.querySelectorAll(".prio-opt").forEach(b => b.classList.toggle("on", b.value === task.spaceId));
+  spaceDialog.showModal();
+}
+spaceDialog.addEventListener("close", async () => {
+  const task = spaceFor, to = spaceDialog.returnValue;
+  spaceFor = null;
+  spaceDialog.returnValue = "";
+  if (!task || !SPACES.some(s => s.id === to) || to === task.spaceId) return;
+  const was = { spaceId: task.spaceId, shared: task.shared, where: task.where };
+  task.spaceId = to;
+  renderCraftTasks();
+  try {
+    ({ shared: task.shared } = await hub.moveSpace(task, to));
+    task.where = { ...task.where, label: task.shared ? "shared" : "lifeOS" };
+    renderCraftTasks();
+    toast(`${task.text} → ${spaceLabel(to)}${to === "todoist" && !task.shared ? " (join a household in food. to share it)" : ""}`);
+  } catch (err) {
+    console.error("Moving the task failed:", err);
+    Object.assign(task, was);
+    renderCraftTasks();
+    toast(`Couldn’t move it: ${err.message}`, "err");
+  }
+});
+
 // ─── Priority ────────────────────────────────────────────────────────
 // Tasks kept in lifeOS and Todoist tasks carry their own priority (Todoist's
 // p1–p3 are red, amber, green); a Craft task's is kept in lifeOS.
@@ -1000,12 +1067,34 @@ function openWhen(task, row) {
   whenDate.value = task.date || "";
   whenTime.value = timeOf(task);
   $("when-clear").hidden = !timeOf(task);
+  // Repeats: tasks kept in lifeOS and Todoist ones. Craft's can't be set from here.
+  const canRepeat = task.builtin || isTodoist(task.spaceId);
+  $("when-repeat-box").hidden = !canRepeat;
+  repeatInput.value = task.builtin ? (task.repeat?.text || "") : (task.repeatText || "");
+  repeatInput.dataset.was = repeatInput.value;
+  previewRepeat();
   $("when-note").textContent = gcal.isConnected() || gcal.wasConnected() ? ""
     : "A time is blocked out on Google Calendar. Connect it in settings first.";
   whenDialog.showModal();
 }
 
 $("when-clear").addEventListener("click", () => { whenTime.value = ""; whenDialog.close("save"); });
+
+const repeatInput = $("when-repeat");
+// What the typed repeat means, shown as it's typed. Blank means no repeat.
+function previewRepeat() {
+  const box = $("when-repeat-preview");
+  const words = repeatInput.value.trim();
+  box.className = "repeat-preview";
+  if (!words) { box.textContent = repeatInput.dataset.was ? "Won’t repeat any more" : "Doesn’t repeat"; return null; }
+  const { repeat } = rep.parseRepeat(words);
+  if (!repeat) { box.className = "repeat-preview err"; box.textContent = "Try “every Monday”, “weekdays”, “every 2 weeks on Tue and Thu” or “last Friday of the month”."; return null; }
+  const { rule, date } = rep.withAnchor(repeat, whenDate.value || null);
+  box.textContent = `${rep.describe(rule)} · next ${dateText(date)}`;
+  return repeat;
+}
+repeatInput.addEventListener("input", previewRepeat);
+repeatInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); whenDialog.close("save"); } });
 // Enter would submit through the form's first button, Cancel, so it saves.
 for (const f of [whenDate, whenTime]) f.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
@@ -1015,9 +1104,35 @@ for (const f of [whenDate, whenTime]) f.addEventListener("keydown", (e) => {
 whenDialog.addEventListener("close", () => {
   const open = whenFor;
   whenFor = null;
-  if (open && whenDialog.returnValue === "save") setWhen(open.task, open.row, whenDate.value, whenTime.value);
+  if (open && whenDialog.returnValue === "save") {
+    const words = repeatInput.value.trim();
+    const changed = words !== (repeatInput.dataset.was || "") && !$("when-repeat-box").hidden;
+    setWhen(open.task, open.row, whenDate.value, whenTime.value).then(() => changed && setRepeat(open.task, words));
+  }
   whenDialog.returnValue = "";
 });
+
+// A repeat typed in the When box. Tasks kept in lifeOS keep the rule (and
+// move to its first date); Todoist reads the words itself.
+async function setRepeat(task, words) {
+  const said = words ? rep.parseRepeat(words).repeat : null;
+  if (words && !said) { toast("That repeat wasn’t one I know, so nothing changed.", "err"); return; }
+  try {
+    if (task.builtin) {
+      const { date, repeat } = await hub.setRepeat(task, said);
+      if (date && date !== task.date) await followTask(task, date);
+      Object.assign(task, { date, repeat, recurring: Boolean(repeat), repeatText: rep.describe(repeat) });
+    } else {
+      await todoist.setRepeat(task, said?.text || "");
+      Object.assign(task, { recurring: Boolean(said), repeatText: said?.text || "" });
+    }
+    renderCraftTasks();
+    toast(said ? `${task.text} → ${task.builtin ? task.repeatText : said.text}` : `${task.text} won’t repeat`);
+  } catch (err) {
+    console.error("Changing the repeat failed:", err);
+    toast(`Couldn’t change the repeat: ${err.message}`, "err");
+  }
+}
 
 async function setWhen(task, row, date, time) {
   if (time && !date) date = isoDay(new Date());
