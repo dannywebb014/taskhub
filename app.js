@@ -1,11 +1,11 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=21";
-import * as todoist from "/lifeos/shared/todoist.js?v=21";
-import * as gcal from "./calendar.js?v=21";
-import * as speech from "/lifeos/shared/speech.js?v=21";
-import * as hub from "/lifeos/shared/hubtasks.js?v=21";
-import * as rep from "/lifeos/shared/repeat.js?v=21";
-import { pullToRefresh } from "/lifeos/shared/pull.js?v=21";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=22";
+import * as todoist from "/lifeos/shared/todoist.js?v=22";
+import * as gcal from "./calendar.js?v=22";
+import * as speech from "/lifeos/shared/speech.js?v=22";
+import * as hub from "/lifeos/shared/hubtasks.js?v=22";
+import * as rep from "/lifeos/shared/repeat.js?v=22";
+import { pullToRefresh } from "/lifeos/shared/pull.js?v=22";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
