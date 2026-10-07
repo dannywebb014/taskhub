@@ -272,6 +272,10 @@
     .toast.show { transform:none; visibility:visible; }
     .toast.ok { border-color:var(--success); color:var(--success); }
     .toast.err { border-color:var(--danger); color:var(--danger); }
+    .toast.has-action { display:flex; align-items:center; gap:12px; }
+    .toast .t-msg { flex:1; min-width:0; }
+    .toast .t-act { flex-shrink:0; border:none; background:var(--accent-soft); color:var(--accent-text); font-weight:700; font-size:14px;
+      padding:6px 12px; border-radius:8px; }
 
     dialog {
       width:min(560px, calc(100% - 24px)); max-height:calc(100% - 24px); border:1px solid var(--border); border-radius:16px;
@@ -426,6 +430,6 @@
 
   <!-- The version is bumped on each release so a phone holding the page in
        its cache still fetches the new code. -->
-  <script type="module" src="app.js?v=18"></script>
+  <script type="module" src="app.js?v=19"></script>
 </body>
 </html>

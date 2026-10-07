@@ -1,10 +1,10 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=18";
-import * as todoist from "/lifeos/shared/todoist.js?v=18";
-import * as gcal from "./calendar.js?v=18";
-import * as speech from "/lifeos/shared/speech.js?v=18";
-import * as hub from "/lifeos/shared/hubtasks.js?v=18";
-import * as rep from "/lifeos/shared/repeat.js?v=18";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=19";
+import * as todoist from "/lifeos/shared/todoist.js?v=19";
+import * as gcal from "./calendar.js?v=19";
+import * as speech from "/lifeos/shared/speech.js?v=19";
+import * as hub from "/lifeos/shared/hubtasks.js?v=19";
+import * as rep from "/lifeos/shared/repeat.js?v=19";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -206,12 +206,23 @@ $("clear").addEventListener("click", () => {
 
 // ─── Sending ─────────────────────────────────────────────────────────
 let toastTimer;
-function toast(msg, kind = "ok") {
+// An action ({ label, run }) adds a button, e.g. Undo, and keeps it up longer.
+function toast(msg, kind = "ok", action = null) {
   const t = $("toast");
-  t.textContent = msg;
-  t.className = `toast show ${kind}`;
+  t.replaceChildren();
+  const text = document.createElement("span");
+  text.className = "t-msg";
+  text.textContent = msg;
+  t.append(text);
+  if (action) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "t-act"; b.textContent = action.label;
+    b.onclick = () => { t.className = "toast"; action.run(); };
+    t.append(b);
+  }
+  t.className = `toast show ${kind}${action ? " has-action" : ""}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.className = "toast"; }, kind === "err" ? 7000 : 3500);
+  toastTimer = setTimeout(() => { t.className = "toast"; }, action ? 6000 : kind === "err" ? 7000 : 3500);
 }
 
 sendBtn.addEventListener("click", async () => {
@@ -231,6 +242,9 @@ sendBtn.addEventListener("click", async () => {
   let added = 0;
   // Tasks given a time, each with its new ID where the API handed one back.
   const timed = [];
+  // What went in, shown in the list straight away; the reload that follows
+  // replaces them with what each service sends back.
+  const fresh = [];
   // Craft tasks given a priority: Craft has none, so lifeOS keeps it.
   const lit = [];
   // Spaces in Craft, which can't be given a repeat from here.
@@ -246,6 +260,7 @@ sendBtn.addEventListener("click", async () => {
           return { text: t.text, date: r ? r.date : t.date, spaceId: t.space, priority: t.priority, repeat: r?.rule || null };
         }));
         group.forEach((t, i) => owe(t, made[i]?.id, t.space));
+        fresh.push(...made);
       } else if (isTodoist(spaceId)) {
         // Todoist adds one task per call, each to the project named in the
         // dictation or, failing that, the shared list.
@@ -253,6 +268,8 @@ sendBtn.addEventListener("click", async () => {
           const project = t.project || todoist.pickProject(t.text.trim(), projects).project;
           const made = await todoist.addTask({ text: t.text.trim(), date: t.date, projectId: project?.id, priority: t.priority, repeatText: t.repeat?.text });
           owe(t, made?.id, spaceId);
+          if (made?.id) fresh.push({ id: String(made.id), text: t.text.trim(), date: (made.due?.date || t.date || "").slice(0, 10) || null, recurring: Boolean(made.due?.is_recurring), due: made.due || null,
+            priority: t.priority || 0, spaceId: "todoist", where: { key: `p:${made.project_id}`, label: project?.name || "Todoist", rank: 2, projectId: String(made.project_id || "") } });
         }
       } else {
         if (group.some(t => t.repeat)) noRepeat.push(spaceLabel(spaceId));
@@ -272,6 +289,8 @@ sendBtn.addEventListener("click", async () => {
         group.forEach((t, i) => {
           const id = ids.length === group.length ? ids[i] : null;
           owe(t, id, spaceId);
+          fresh.push({ id: id ? String(id) : `tmp-${Date.now()}-${i}`, text: t.text.trim(), prefix: "", date: t.date || null, recurring: false,
+            priority: t.priority || 0, spaceId, where: placeOf({ type: "inbox" }) });
           if (t.priority) lit.push({ id: id ? String(id) : null, text: t.text.trim(), spaceId, priority: t.priority });
         });
       }
@@ -283,6 +302,10 @@ sendBtn.addEventListener("click", async () => {
   }
 
   tasks = failed.flatMap(f => f.group);
+  if (fresh.length) {
+    craftTasks = [...craftTasks.filter(t => !fresh.some(f => f.id === t.id)), ...fresh];
+    renderCraftTasks();
+  }
   const reload = added ? loadCraftTasks() : null;
   // Once anything has gone through, re-reading the dictation would bring those
   // tasks back and add them twice, so it is cleared; failures stay in the list.
@@ -448,14 +471,28 @@ const isLate = (t) => { const d = dayDiff(t.date); return d !== null && d < 0; }
 // date, so those come from the whole-space list ("all"), which also holds
 // done tasks and anything in the trash or a template; those are dropped.
 // A connection that can't see documents has no such list, which is fine.
+// The trash and templates hardly change, so their document lists are kept on
+// this device for a day (Refresh fetches them again): two requests fewer per
+// space on each open.
+let skipFresh = false;
+async function skipDocs(spaceId) {
+  const key = `tasks.skip.${spaceId}`;
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) || "null");
+    if (!skipFresh && saved && Date.now() - saved.at < 86400000 && saved.url === settings.spaces[spaceId]?.url) return new Set(saved.ids);
+  } catch { /* fetch them */ }
+  const [trash, templates] = await Promise.all([
+    craft(spaceId, "/documents?location=trash"),
+    craft(spaceId, "/documents?location=templates"),
+  ]);
+  const ids = [...(trash.items || []), ...(templates.items || [])].map(d => d.id);
+  try { localStorage.setItem(key, JSON.stringify({ at: Date.now(), url: settings.spaces[spaceId]?.url, ids })); } catch { /* private mode */ }
+  return new Set(ids);
+}
+
 async function undatedDocTasks(spaceId) {
   try {
-    const [all, trash, templates] = await Promise.all([
-      craft(spaceId, "/tasks?scope=all"),
-      craft(spaceId, "/documents?location=trash"),
-      craft(spaceId, "/documents?location=templates"),
-    ]);
-    const skip = new Set([...(trash.items || []), ...(templates.items || [])].map(d => d.id));
+    const [all, skip] = await Promise.all([craft(spaceId, "/tasks?scope=all"), skipDocs(spaceId)]);
     return (all.items || []).filter(i => i.taskInfo?.state === "todo" && i.location?.type === "document" && !skip.has(i.location.documentId));
   } catch (err) {
     if (err.status !== 404) console.error(`Loading undated ${spaceLabel(spaceId)} tasks failed:`, err);
@@ -470,6 +507,9 @@ async function loadCraftTasks() {
   const blocksJob = loadBlocks();
   const found = new Map();
   const failed = [];
+  // Sources that didn't load keep what was showing for them (the copy saved
+  // on this device), rather than looking empty.
+  const failedIds = new Set();
   const jobs = spaces.map(async (space) => {
     craft(space.id, "/documents?limit=1")
       .then(() => { canEditDocs[space.id] = true; })
@@ -500,6 +540,7 @@ async function loadCraftTasks() {
     } catch (err) {
       console.error(`Loading ${spaceLabel(space.id)} tasks failed:`, err);
       failed.push(spaceLabel(space.id));
+      failedIds.add(space.id);
     }
   });
   // Craft has no priority, so lifeOS keeps a light for each Craft task given one.
@@ -510,7 +551,7 @@ async function loadCraftTasks() {
   // Tasks kept in lifeOS show whatever is connected here.
   jobs.push(hub.loadTasks()
     .then(list => { for (const task of list) found.set(task.id, task); })
-    .catch(err => { console.error("Loading lifeOS tasks failed:", err); failed.push("lifeOS"); }));
+    .catch(err => { console.error("Loading lifeOS tasks failed:", err); failed.push("lifeOS"); failedIds.add("lifeos"); }));
   if (isConfigured("todoist")) {
     jobs.push((async () => {
       try {
@@ -519,6 +560,7 @@ async function loadCraftTasks() {
       } catch (err) {
         console.error("Loading Todoist tasks failed:", err);
         failed.push("joint.");
+        failedIds.add("todoist");
       }
     })());
   }
@@ -528,8 +570,12 @@ async function loadCraftTasks() {
   for (const t of found.values()) {
     if (!t.builtin && !isTodoist(t.spaceId)) t.priority = craftLights.get(hub.craftKey(t.spaceId, t.id)) || 0;
   }
+  for (const t of craftTasks) {
+    if (!found.has(t.id) && failedIds.has(t.builtin ? "lifeos" : t.spaceId)) found.set(t.id, t);
+  }
   craftTasks = [...found.values()];
   loadingTasks = false;
+  skipFresh = false;
   renderCraftTasks();
   if (failed.length) toast(`Couldn’t load tasks from ${failed.join(" and ")}`, "err");
 }
@@ -563,15 +609,20 @@ async function reschedule(task, date, row) {
 }
 
 async function completeTask(task, row) {
+  if (String(task.id).startsWith("tmp-")) { toast("Still saving that one. Try again in a moment.", "err"); return; }
   row.classList.add("done");
+  const prevDate = task.date, prevDue = task.due;
+  // Marks this tick, so an Undo before the row leaves stops it leaving.
+  const tickedAt = task.tickedAt = Date.now();
+  let tick = {};
   try {
     if (task.builtin) {
       // A repeating one moves to its next date (its time block too) and stays.
-      const { next } = await hub.completeTask(task);
-      if (next) {
-        await followTask(task, next);
-        task.date = next;
-        toast(`${task.text} → next ${dateText(next)}`);
+      tick = await hub.completeTask(task);
+      if (tick.next) {
+        await followTask(task, tick.next);
+        task.date = tick.next;
+        toast(`${task.text} → next ${dateText(tick.next)}`, "ok", { label: "Undo", run: () => untick(task, { ...tick, prevDate }) });
         setTimeout(renderCraftTasks, 700);
         return;
       }
@@ -580,8 +631,10 @@ async function completeTask(task, row) {
       method: "PUT",
       body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { state: "done" } }] }),
     });
+    toast(`Ticked off ${task.text}`, "ok", { label: "Undo", run: () => untick(task, { ...tick, prevDate, prevDue }) });
     // Leave it ticked for a moment so the change is visible, then drop it.
     setTimeout(() => {
+      if (task.tickedAt !== tickedAt) return;
       craftTasks = craftTasks.filter(t => t.id !== task.id);
       renderCraftTasks();
     }, 900);
@@ -591,6 +644,31 @@ async function completeTask(task, row) {
     toast(err instanceof TypeError ? "Couldn’t reach Craft, Todoist or lifeOS"
       : /scope/i.test(err.message) ? scopeHelp(task.spaceId)
       : `Couldn’t tick that off: ${err.message}`, "err");
+  }
+}
+
+// Undo for a tick: open again (or, for a repeating one, back to its date).
+async function untick(task, { prevDate, prevDue, next, logId }) {
+  task.tickedAt = null;
+  try {
+    if (task.builtin) {
+      await hub.undoComplete(task, { prevDate, next, logId });
+      if (next) await followTask(task, prevDate);
+    } else if (isTodoist(task.spaceId)) {
+      // A repeating Todoist task moved on when closed; put its date back.
+      if (task.recurring && prevDue) await todoist.rescheduleTask({ ...task, due: prevDue }, prevDate);
+      else await todoist.reopenTask(task.id);
+    } else {
+      await craft(task.spaceId, "/tasks", { method: "PUT", body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { state: "todo" } }] }) });
+    }
+    task.date = prevDate;
+    if (prevDue) task.due = prevDue;
+    if (!craftTasks.includes(task)) craftTasks = [...craftTasks, task];
+    renderCraftTasks();
+    toast(`${task.text} is back`);
+  } catch (err) {
+    console.error("Undo failed:", err);
+    toast(`Couldn’t undo: ${err.message}`, "err");
   }
 }
 
@@ -655,9 +733,20 @@ function editText(task, row) {
 const scopeHelp = (spaceId) =>
   `This task is inside a document, and the ${spaceLabel(spaceId)} connection can only change tasks in the inbox and daily notes. In Craft, create an “All Documents” connection for that space and paste its URL in the settings.`;
 
+// The list is kept on this device, so tasks. opens with it straight away and
+// then brings it up to date (tagged with who it belongs to).
+const CACHE_KEY = "tasks.cache";
+let cacheOwner = null;
+function saveCache() {
+  if (!cacheOwner) return;
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ uid: cacheOwner, at: Date.now(), tasks: craftTasks })); } catch { /* full or private */ }
+}
+
 function renderCraftTasks() {
   const box = $("craft-tasks");
   const title = $("craft-title");
+  $("refresh").textContent = loadingTasks && craftTasks.length ? "Updating…" : "Refresh";
+  saveCache();
   title.textContent = "";
   if (loadingTasks && !craftTasks.length) {
     box.innerHTML = `<p class="loading">Loading your tasks…</p>`;
@@ -957,6 +1046,7 @@ async function moveTask(task, dest) {
 
 $("refresh").addEventListener("click", () => {
   for (const id in docLists) delete docLists[id];
+  skipFresh = true;
   loadCraftTasks();
 });
 
@@ -1351,4 +1441,18 @@ if (back?.error && gcal.pending().length) {
 }
 
 render();
-loadCraftTasks().then(placePending);
+// The saved list straight away, then the real one. Whose list it is gets
+// checked as soon as the sign-in answers (which can take a moment after an
+// hour away), and a list that isn't this person's is dropped.
+let saved = null;
+try { saved = JSON.parse(localStorage.getItem(CACHE_KEY) || "null"); } catch { /* start empty */ }
+if (saved?.uid && Array.isArray(saved.tasks)) {
+  craftTasks = saved.tasks.filter(t => !String(t.id).startsWith("tmp-"));
+  loadingTasks = true;
+  renderCraftTasks();
+}
+hub.userId().catch(() => null).then((uid) => {
+  cacheOwner = uid;
+  if (saved?.uid && saved.uid !== uid) { craftTasks = []; renderCraftTasks(); }
+  return loadCraftTasks();
+}).then(placePending);
