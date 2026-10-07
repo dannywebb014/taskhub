@@ -1,16 +1,19 @@
-import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=22";
-import * as todoist from "/lifeos/shared/todoist.js?v=22";
-import * as gcal from "./calendar.js?v=22";
-import * as speech from "/lifeos/shared/speech.js?v=22";
-import * as hub from "/lifeos/shared/hubtasks.js?v=22";
-import * as rep from "/lifeos/shared/repeat.js?v=22";
-import { pullToRefresh } from "/lifeos/shared/pull.js?v=22";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=23";
+import * as todoist from "/lifeos/shared/todoist.js?v=23";
+import * as gcal from "./calendar.js?v=23";
+import * as speech from "/lifeos/shared/speech.js?v=23";
+import * as hub from "/lifeos/shared/hubtasks.js?v=23";
+import * as rep from "/lifeos/shared/repeat.js?v=23";
+import { pullToRefresh } from "/lifeos/shared/pull.js?v=23";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
 // space. It is kept in this browser only, never in the repo.
 const STORE_KEY = "tasks.settings";
+// The date reader (200 KB) is only needed once something is typed or said,
+// so it loads alongside the page instead of holding it up.
+let chrono = null;
+const chronoReady = import("https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm").then(m => { chrono = m; });
 const SPACE_COLOUR = { my: "var(--accent)", work: "var(--work)", todoist: "var(--joint)" };
 const isTodoist = (id) => id === "todoist";
 let projects = [];   // Todoist projects, for naming and for routing new tasks
@@ -177,6 +180,7 @@ const lengthText = (m) => m % 60 ? (m > 60 ? `${Math.floor(m / 60)}h ${m % 60}m`
 // the dictation itself is changed again.
 let parseTimer;
 function reparse() {
+  if (!chrono) { chronoReady.then(reparse); return; }
   tasks = parseTasks(dictation.value, chrono, { defaultSpace: settings.defaultSpace });
   routeTodoist();
   render();
@@ -1499,11 +1503,27 @@ document.querySelectorAll("a[data-hub]").forEach(a => a.addEventListener("click"
 }));
 
 // Back from Google, or due a quiet trip there for a fresh token.
+const preloaded = new URLSearchParams(location.search).has("preload");
+if (preloaded) history.replaceState(history.state, "", location.pathname + location.hash);
 const back = gcal.takeRedirect();
 if (back?.error && gcal.pending().length) {
   toast("Sign in to Google Calendar in settings to block out the times you said.", "err");
 } else if (!back && clientId() && gcal.wasConnected() && !gcal.isConnected() && !gcal.silentTried()) {
-  gcal.connect(clientId(), { silent: true });
+  // Loaded ahead of time behind the lifeOS picker (?preload), the trip to
+  // Google, which takes the whole page with it, waits until tasks. is opened.
+  if (preloaded) {
+    // Told by the picker, or (if that came before this listened) the first touch.
+    const renew = () => {
+      removeEventListener("message", onMessage);
+      removeEventListener("pointerdown", renew);
+      if (!gcal.isConnected() && !gcal.silentTried()) gcal.connect(clientId(), { silent: true });
+    };
+    const onMessage = (e) => { if (e.origin === location.origin && e.data?.lifeosShown) renew(); };
+    addEventListener("message", onMessage);
+    addEventListener("pointerdown", renew);
+  } else {
+    gcal.connect(clientId(), { silent: true });
+  }
 }
 
 render();
