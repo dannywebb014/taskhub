@@ -27,6 +27,7 @@
       --text:#2d2a24; --muted:#7a756a; --dim:#a8a295;
       --accent:#2a7d77; --accent-hover:#1f6560; --accent-soft:#2a7d7714; --accent-text:#1f5f5c; --joint:#3f7a4a; --joint-soft:#3f7a4a14;
       --work:#a0672e; --work-soft:#a0672e14;
+      --p3:#d14343; --p2:#e0a020; --p1:#3f9a55;
       --danger:#b54e4e; --danger-soft:#b54e4e12; --success:#4a7c4a; --success-soft:#4a7c4a14;
       --shadow:0 1px 3px rgba(0,0,0,.06);
     }
@@ -36,6 +37,7 @@
         --text:#e6e8eb; --muted:#9aa2ad; --dim:#6b737e;
         --accent:#2f8a84; --accent-hover:#3a9a93; --accent-soft:#4fa8a024; --accent-text:#8fd0c9; --joint:#7cc48a; --joint-soft:#7cc48a1f;
         --work:#d99a5b; --work-soft:#d99a5b1f;
+        --p3:#ee6b6b; --p2:#f0bd4f; --p1:#6cc483;
         --danger:#c96b6b; --danger-soft:#c96b6b1f; --success:#6bba6b; --success-soft:#6bba6b1f;
         --shadow:0 1px 3px rgba(0,0,0,.3);
       }
@@ -200,6 +202,32 @@
       background:none; display:flex; align-items:center; justify-content:center; color:transparent; transition:all .15s;
     }
     .tick:active { transform:scale(.9); }
+    /* The traffic light: high red, medium amber, low green, on the tick's ring. */
+    .t-row.p3 .tick { border-color:var(--p3); background:color-mix(in srgb, var(--p3) 12%, transparent); }
+    .t-row.p2 .tick { border-color:var(--p2); background:color-mix(in srgb, var(--p2) 12%, transparent); }
+    .t-row.p1 .tick { border-color:var(--p1); background:color-mix(in srgb, var(--p1) 12%, transparent); }
+    .t-prio {
+      display:inline-flex; align-items:center; gap:5px; flex-shrink:0; padding:2px 7px; margin:-2px 0; border:none; border-radius:9px;
+      background:var(--input); font:inherit; font-weight:600; color:var(--muted); cursor:pointer;
+    }
+    .t-prio .light { width:8px; height:8px; border-radius:50%; border:1.5px solid var(--dim); }
+    .t-prio.p3 { color:var(--p3); } .t-prio.p3 .light { background:var(--p3); border-color:var(--p3); }
+    .t-prio.p2 { color:var(--p2); } .t-prio.p2 .light { background:var(--p2); border-color:var(--p2); }
+    .t-prio.p1 { color:var(--p1); } .t-prio.p1 .light { background:var(--p1); border-color:var(--p1); }
+    .chip.prio .light { width:9px; height:9px; border-radius:50%; border:1.5px solid var(--dim); }
+    .chip.prio.p3 { color:var(--p3); } .chip.prio.p3 .light { background:var(--p3); border-color:var(--p3); }
+    .chip.prio.p2 { color:var(--p2); } .chip.prio.p2 .light { background:var(--p2); border-color:var(--p2); }
+    .chip.prio.p1 { color:var(--p1); } .chip.prio.p1 .light { background:var(--p1); border-color:var(--p1); }
+    .prio-opts { display:grid; gap:8px; margin-bottom:14px; }
+    .prio-opt {
+      display:flex; align-items:center; gap:10px; width:100%; padding:12px 14px; border-radius:12px; border:1px solid var(--border);
+      background:var(--card); font-size:16px; font-weight:600; text-align:left;
+    }
+    .prio-opt .light { width:14px; height:14px; border-radius:50%; border:2px solid var(--dim); }
+    .prio-opt[data-p="3"] .light { background:var(--p3); border-color:var(--p3); }
+    .prio-opt[data-p="2"] .light { background:var(--p2); border-color:var(--p2); }
+    .prio-opt[data-p="1"] .light { background:var(--p1); border-color:var(--p1); }
+    .prio-opt.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
     .t-row.done .tick { background:var(--accent); border-color:var(--accent); color:#fff; }
     .t-row.done .t-text { text-decoration:line-through; color:var(--dim); }
     .t-body { flex:1; min-width:0; }
@@ -358,8 +386,22 @@
     </form>
   </dialog>
 
+  <dialog id="prio">
+    <form method="dialog" class="dlg">
+      <h2>Priority</h2>
+      <p class="sub" id="prio-task"></p>
+      <div class="prio-opts">
+        <button class="prio-opt" value="3" data-p="3"><span class="light"></span>High</button>
+        <button class="prio-opt" value="2" data-p="2"><span class="light"></span>Medium</button>
+        <button class="prio-opt" value="1" data-p="1"><span class="light"></span>Low</button>
+        <button class="prio-opt" value="0" data-p="0"><span class="light"></span>None</button>
+      </div>
+      <div class="dlg-foot"><button class="btn" value="cancel">Cancel</button></div>
+    </form>
+  </dialog>
+
   <!-- The version is bumped on each release so a phone holding the page in
        its cache still fetches the new code. -->
-  <script type="module" src="app.js?v=16"></script>
+  <script type="module" src="app.js?v=17"></script>
 </body>
 </html>

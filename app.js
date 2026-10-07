@@ -1,9 +1,9 @@
 import * as chrono from "https://cdn.jsdelivr.net/npm/chrono-node@2.10.1/+esm";
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=16";
-import * as todoist from "/lifeos/shared/todoist.js?v=16";
-import * as gcal from "./calendar.js?v=16";
-import * as speech from "/lifeos/shared/speech.js?v=16";
-import * as hub from "/lifeos/shared/hubtasks.js?v=16";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=17";
+import * as todoist from "/lifeos/shared/todoist.js?v=17";
+import * as gcal from "./calendar.js?v=17";
+import * as speech from "/lifeos/shared/speech.js?v=17";
+import * as hub from "/lifeos/shared/hubtasks.js?v=17";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -76,6 +76,9 @@ const sendBtn = $("send");
 let tasks = [];
 
 const spaceLabel = (id) => SPACES.find(s => s.id === id)?.label || id;
+// The traffic light: 3 high (red), 2 medium (amber), 1 low (green), 0 none.
+const PRIORITY = ["None", "Low", "Medium", "High"];
+const LIGHT = `<span class="light"></span>`;
 
 function dateLabel(iso) {
   if (!iso) return "No date";
@@ -119,6 +122,7 @@ function render() {
           <input type="date" aria-label="Schedule date">
           ${t.date ? `<button class="clear" data-act="nodate" aria-label="Remove date">×</button>` : ""}
         </span>
+        <button class="chip prio p${t.priority || 0}" data-act="prio" aria-label="Priority, tap to change">${LIGHT}<span>${t.priority ? PRIORITY[t.priority] : "Priority"}</span></button>
         <span class="chip ${t.time ? "has-date" : ""}">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
           <span class="time-label"></span>
@@ -148,6 +152,11 @@ function render() {
     el.querySelector("[data-act=space]").addEventListener("click", () => {
       const idx = SPACES.findIndex(s => s.id === t.space);
       t.space = SPACES[(idx + 1) % SPACES.length].id;
+      render();
+    });
+    // Taps go high → medium → low → none, the order most tasks are sorted in.
+    el.querySelector("[data-act=prio]").addEventListener("click", () => {
+      t.priority = [3, 0, 1, 2][t.priority || 0];
       render();
     });
     el.querySelector("[data-act=nodate]")?.addEventListener("click", (e) => { e.stopPropagation(); t.date = null; t.time = null; render(); });
@@ -218,19 +227,21 @@ sendBtn.addEventListener("click", async () => {
   let added = 0;
   // Tasks given a time, each with its new ID where the API handed one back.
   const timed = [];
+  // Craft tasks given a priority: Craft has none, so lifeOS keeps it.
+  const lit = [];
   const owe = (t, id, spaceId) => { if (t.time && t.date) timed.push({ id: id ? String(id) : null, text: t.text.trim(), spaceId, date: t.date, time: t.time, minutes: t.minutes || gcal.DEFAULT_MINUTES }); };
   for (const [spaceId, group] of bySpace) {
     try {
       if (spaceId === "lifeos") {
         // Every space kept in lifeOS goes in one request.
-        const made = await hub.addTasks(group.map(t => ({ text: t.text, date: t.date, spaceId: t.space })));
+        const made = await hub.addTasks(group.map(t => ({ text: t.text, date: t.date, spaceId: t.space, priority: t.priority })));
         group.forEach((t, i) => owe(t, made[i]?.id, t.space));
       } else if (isTodoist(spaceId)) {
         // Todoist adds one task per call, each to the project named in the
         // dictation or, failing that, the shared list.
         for (const t of group) {
           const project = t.project || todoist.pickProject(t.text.trim(), projects).project;
-          const made = await todoist.addTask({ text: t.text.trim(), date: t.date, projectId: project?.id });
+          const made = await todoist.addTask({ text: t.text.trim(), date: t.date, projectId: project?.id, priority: t.priority });
           owe(t, made?.id, spaceId);
         }
       } else {
@@ -247,7 +258,11 @@ sendBtn.addEventListener("click", async () => {
         // Craft doesn't document what it returns, so the IDs are used only
         // when there is one per task; otherwise the task is found by its text.
         const ids = (made?.items || made?.tasks || (Array.isArray(made) ? made : [])).map(x => x?.id);
-        group.forEach((t, i) => owe(t, ids.length === group.length ? ids[i] : null, spaceId));
+        group.forEach((t, i) => {
+          const id = ids.length === group.length ? ids[i] : null;
+          owe(t, id, spaceId);
+          if (t.priority) lit.push({ id: id ? String(id) : null, text: t.text.trim(), spaceId, priority: t.priority });
+        });
       }
       added += group.length;
     } catch (err) {
@@ -268,10 +283,9 @@ sendBtn.addEventListener("click", async () => {
     toast(`${added ? `Added ${added}, but ` : ""}couldn’t add to ${why}`, "err");
   }
   render();
-  if (timed.length) {
-    await reload;
-    placeBlocks(timed);
-  }
+  if (timed.length || lit.length) await reload;
+  if (lit.length) lightCraftTasks(lit);
+  if (timed.length) placeBlocks(timed);
 });
 
 // ─── Time blocks ─────────────────────────────────────────────────────
@@ -463,6 +477,7 @@ async function loadCraftTasks() {
             date: item.taskInfo?.scheduleDate || null,
             // The task list puts repeat beside taskInfo, not in it as edits do.
             recurring: Boolean(item.repeat || item.taskInfo?.repeat),
+            priority: 0,
             spaceId: space.id,
             where: placeOf(item.location),
           });
@@ -473,6 +488,11 @@ async function loadCraftTasks() {
       failed.push(spaceLabel(space.id));
     }
   });
+  // Craft has no priority, so lifeOS keeps a light for each Craft task given one.
+  let craftLights = new Map();
+  if (spaces.length) jobs.push(hub.loadCraftPriorities()
+    .then(map => { craftLights = map; })
+    .catch(err => console.error("Loading Craft priorities failed:", err)));
   // Tasks kept in lifeOS show whatever is connected here.
   jobs.push(hub.loadTasks()
     .then(list => { for (const task of list) found.set(task.id, task); })
@@ -491,6 +511,9 @@ async function loadCraftTasks() {
   await Promise.all([...jobs, blocksJob]);
   routeTodoist();
   if (tasks.length) render();
+  for (const t of found.values()) {
+    if (!t.builtin && !isTodoist(t.spaceId)) t.priority = craftLights.get(hub.craftKey(t.spaceId, t.id)) || 0;
+  }
   craftTasks = [...found.values()];
   loadingTasks = false;
   renderCraftTasks();
@@ -665,7 +688,7 @@ const byDate = (a, b) => (a.date || "9999").localeCompare(b.date || "9999");
 // same space order. Undated tasks have their own no date. section below.
 const inOrder = (list, dateFirst) => [...list].sort((a, b) =>
   (dateFirst ? byDate(a, b) || bySpaceOrder(a, b) : bySpaceOrder(a, b) || byDate(a, b)) ||
-  a.text.localeCompare(b.text));
+  (b.priority || 0) - (a.priority || 0) || a.text.localeCompare(b.text));
 
 function fold(key, label, list, dateFirst = false, action = null) {
   const wrap = document.createElement("section");
@@ -764,10 +787,11 @@ const isLocked = (task) =>
 
 function taskRow(task) {
   const row = document.createElement("div");
-  row.className = "t-row";
+  row.className = `t-row${task.priority ? ` p${task.priority}` : ""}`;
   row.innerHTML = `<button class="tick" aria-label="Tick off"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
     <div class="t-body"><div class="t-text"></div><div class="t-meta">
       <span class="t-space ${task.spaceId}"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</span>
+      <button type="button" class="t-prio${task.priority ? ` p${task.priority}` : ""}" aria-label="Priority: ${PRIORITY[task.priority || 0]}, tap to change">${LIGHT}${task.priority ? PRIORITY[task.priority] : ""}</button>
       <button type="button" class="t-when${isLate(task) ? " late" : ""}${task.date ? "" : " none"}" aria-label="Change the date or time">
         <span class="when-text">${esc(whenText(task))}</span>
       </button>
@@ -778,6 +802,7 @@ function taskRow(task) {
     </div></div>`;
   row.querySelector(".t-text").textContent = task.text || "(no text)";
   row.querySelector(".t-when").onclick = () => openWhen(task, row);
+  row.querySelector(".t-prio").onclick = () => openPriority(task);
   const locked = isLocked(task);
   row.classList.toggle("locked", locked);
   row.querySelector(".tick").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : completeTask(task, row);
@@ -898,6 +923,65 @@ $("refresh").addEventListener("click", () => {
   for (const id in docLists) delete docLists[id];
   loadCraftTasks();
 });
+
+// ─── Priority ────────────────────────────────────────────────────────
+// Tasks kept in lifeOS and Todoist tasks carry their own priority (Todoist's
+// p1–p3 are red, amber, green); a Craft task's is kept in lifeOS.
+const prioDialog = $("prio");
+let prioFor = null;
+
+function openPriority(task) {
+  finishEdit?.(true);
+  prioFor = task;
+  $("prio-task").textContent = task.text;
+  prioDialog.querySelectorAll(".prio-opt").forEach(b => b.classList.toggle("on", Number(b.value) === (task.priority || 0)));
+  prioDialog.showModal();
+}
+
+prioDialog.addEventListener("close", () => {
+  const task = prioFor;
+  prioFor = null;
+  // Escape and Cancel leave no number behind, so nothing changes.
+  const raw = prioDialog.returnValue;
+  prioDialog.returnValue = "";
+  const p = /^[0-3]$/.test(raw) ? Number(raw) : NaN;
+  if (task && Number.isInteger(p) && p >= 0 && p <= 3 && p !== (task.priority || 0)) setPriority(task, p);
+});
+
+async function setPriority(task, p) {
+  const was = task.priority || 0;
+  task.priority = p;
+  renderCraftTasks();
+  try {
+    if (task.builtin) await hub.setPriority(task.id, p);
+    else if (isTodoist(task.spaceId)) await todoist.setPriority(task.id, p);
+    else await hub.setCraftPriority(task.spaceId, task.id, p);
+    toast(`${task.text} → ${p ? `${PRIORITY[p].toLowerCase()} priority` : "no priority"}`);
+  } catch (err) {
+    console.error("Changing the priority failed:", err);
+    task.priority = was;
+    renderCraftTasks();
+    toast(err instanceof TypeError ? "Couldn’t reach Todoist or lifeOS" : `Couldn’t change the priority: ${err.message}`, "err");
+  }
+}
+
+// Priorities said for new Craft tasks, once they're in the list. A task
+// without an ID from Craft is found by its text, as time blocks are.
+async function lightCraftTasks(list) {
+  for (const item of list) {
+    const task = (item.id && craftTasks.find(t => t.id === item.id && t.spaceId === item.spaceId))
+      || craftTasks.find(t => t.spaceId === item.spaceId && t.text === item.text && !t.priority);
+    if (!task) continue;
+    try {
+      await hub.setCraftPriority(task.spaceId, task.id, item.priority);
+      task.priority = item.priority;
+    } catch (err) {
+      console.error("Saving a Craft task's priority failed:", err);
+      toast(`Couldn’t save the priority for ${item.text}`, "err");
+    }
+  }
+  renderCraftTasks();
+}
 
 // ─── Changing a task's date and time ─────────────────────────────────
 // Tapping a task's date opens this. The date is the task's own, in Craft or
