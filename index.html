@@ -250,6 +250,8 @@
     .prio-opt.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
     .t-row.done .tick { background:var(--accent); border-color:var(--accent); color:#fff; }
     .t-row.done .t-text { text-decoration:line-through; color:var(--dim); }
+    .done-fold .t-row { align-items:center; }
+    .done-fold .restore { flex-shrink:0; color:var(--accent-text); font-weight:600; }
     .t-body { flex:1; min-width:0; }
     .t-text { font-size:15px; overflow-wrap:anywhere; cursor:text; }
     .t-edit {
@@ -444,7 +446,7 @@
 
   <!-- The version is bumped on each release so a phone holding the page in
        its cache still fetches the new code. -->
-  <script type="module" src="app.js?v=24"></script>
+  <script type="module" src="app.js?v=25"></script>
   <script>
     // Opens fast and works with no signal (sw.js keeps the app's files here).
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(err => console.warn("Offline copy:", err));

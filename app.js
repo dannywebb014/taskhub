@@ -1,10 +1,10 @@
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=24";
-import * as todoist from "/lifeos/shared/todoist.js?v=24";
-import * as gcal from "./calendar.js?v=24";
-import * as speech from "/lifeos/shared/speech.js?v=24";
-import * as hub from "/lifeos/shared/hubtasks.js?v=24";
-import * as rep from "/lifeos/shared/repeat.js?v=24";
-import { pullToRefresh } from "/lifeos/shared/pull.js?v=24";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=25";
+import * as todoist from "/lifeos/shared/todoist.js?v=25";
+import * as gcal from "./calendar.js?v=25";
+import * as speech from "/lifeos/shared/speech.js?v=25";
+import * as hub from "/lifeos/shared/hubtasks.js?v=25";
+import * as rep from "/lifeos/shared/repeat.js?v=25";
+import { pullToRefresh } from "/lifeos/shared/pull.js?v=25";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -439,6 +439,7 @@ const SCOPES = ["active", "upcoming", "inbox"];
 // endpoint, which is how this tells the two apart.
 const canEditDocs = {};
 let craftTasks = [];   // { id, text, date, spaceId, where }
+let doneTasks = [];    // lifeOS tasks ticked off this past week, newest first (done. section)
 const openSections = (() => {
   try { return JSON.parse(localStorage.getItem("tasks.sections") || "{}"); } catch { return {}; }
 })();
@@ -558,6 +559,9 @@ async function loadCraftTasks() {
   if (spaces.length) jobs.push(hub.loadCraftPriorities()
     .then(map => { craftLights = map; })
     .catch(err => console.error("Loading Craft priorities failed:", err)));
+  jobs.push(hub.loadDone()
+    .then(list => { doneTasks = list; })
+    .catch(err => console.error("Loading done tasks failed:", err)));
   // Tasks kept in lifeOS show whatever is connected here.
   jobs.push(hub.loadTasks()
     .then(list => { for (const task of list) found.set(task.id, task); })
@@ -641,6 +645,7 @@ async function completeTask(task, row) {
       method: "PUT",
       body: JSON.stringify({ tasksToUpdate: [{ id: task.id, taskInfo: { state: "done" } }] }),
     });
+    if (task.builtin) doneTasks = [{ ...task, doneAt: new Date().toISOString() }, ...doneTasks.filter(t => t.id !== task.id)];
     toast(`Ticked off ${task.text}`, "ok", { label: "Undo", run: () => untick(task, { ...tick, prevDate, prevDue }) });
     // Leave it ticked for a moment so the change is visible, then drop it.
     setTimeout(() => {
@@ -673,6 +678,7 @@ async function untick(task, { prevDate, prevDue, next, logId }) {
     }
     task.date = prevDate;
     if (prevDue) task.due = prevDue;
+    doneTasks = doneTasks.filter(t => t.id !== task.id);
     if (!craftTasks.includes(task)) craftTasks = [...craftTasks, task];
     renderCraftTasks();
     toast(`${task.text} is back`);
@@ -776,7 +782,57 @@ function renderCraftTasks() {
     fold("today", "today", shown.filter(due), false, moveAllButton),
     fold("upcoming", "upcoming", shown.filter(t => t.date && !due(t)), true),
     fold("nodate", "no date", shown.filter(t => !t.date)),
+    doneFold(doneTasks.filter(t => spaces.length < 2 || !hiddenSpaces.has(t.spaceId))),
   );
+}
+
+// done.: lifeOS tasks ticked off in the past week, newest first, each with
+// Restore in case one was ticked by mistake. Closed until opened.
+function doneFold(list) {
+  const wrap = document.createElement("section");
+  const closed = openSections.done !== true;
+  wrap.className = `fold done-fold${closed ? " closed" : ""}`;
+  wrap.innerHTML = `<div class="fold-top"><button class="fold-head"><span class="fold-name">done<span class="dot">.</span></span>
+      <span class="n">${list.length || ""}</span>
+      <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </button></div><div class="fold-body"></div>`;
+  const body = wrap.querySelector(".fold-body");
+  if (!list.length) body.innerHTML = `<p class="empty">Tasks kept in lifeOS show here for a week after you tick them off.</p>`;
+  for (const task of list) {
+    const row = document.createElement("div");
+    row.className = "t-row done";
+    const when = new Date(task.doneAt);
+    const ago = dayDiff(isoDay(when));
+    const day = ago === 0 ? "today" : ago === -1 ? "yesterday" : when.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+    row.innerHTML = `<span class="tick" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+      <div class="t-body"><div class="t-text"></div><div class="t-meta">
+        <span class="t-space ${task.spaceId}"><span class="dot"></span>${esc(spaceLabel(task.spaceId))}</span>
+        <span>ticked off ${esc(day)}, ${when.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span>
+      </div></div>
+      <button type="button" class="link-btn restore">Restore</button>`;
+    row.querySelector(".t-text").textContent = task.text || "(no text)";
+    row.querySelector(".restore").onclick = () => restoreTask(task);
+    body.append(row);
+  }
+  wrap.querySelector(".fold-head").onclick = () => {
+    openSections.done = !wrap.classList.toggle("closed");
+    try { localStorage.setItem("tasks.sections", JSON.stringify(openSections)); } catch { /* private mode */ }
+  };
+  return wrap;
+}
+
+async function restoreTask(task) {
+  try {
+    await hub.reopenTask(task.id);
+    doneTasks = doneTasks.filter(t => t.id !== task.id);
+    const { doneAt, ...open } = task;
+    craftTasks = [...craftTasks.filter(t => t.id !== task.id), open];
+    renderCraftTasks();
+    toast(`${task.text} is back`);
+  } catch (err) {
+    console.error("Restoring a task failed:", err);
+    toast(`Couldn’t restore it: ${err.message}`, "err");
+  }
 }
 
 // One chip per list, each switched on or off. The last one left on can't be
