@@ -189,6 +189,16 @@ export async function moveBlock(block, date, time = hhmm(block.start)) {
   return toBlock(e);
 }
 
+// A block handed to another task (lifeOS's task trial copies a task, and
+// the block follows the copy, or goes back to the original).
+export async function retagBlock(block, taskId) {
+  const e = await api(`/calendars/primary/events/${encodeURIComponent(block.id)}`, {
+    method: "PATCH",
+    body: { extendedProperties: { private: { calhubTask: String(taskId) } } },
+  });
+  return toBlock(e);
+}
+
 // A task's time taken away: its block goes, as calendar. removes one.
 export async function deleteBlock(block) {
   await api(`/calendars/primary/events/${encodeURIComponent(block.id)}`, { method: "DELETE" });

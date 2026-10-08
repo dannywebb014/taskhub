@@ -1,10 +1,10 @@
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=23";
-import * as todoist from "/lifeos/shared/todoist.js?v=23";
-import * as gcal from "./calendar.js?v=23";
-import * as speech from "/lifeos/shared/speech.js?v=23";
-import * as hub from "/lifeos/shared/hubtasks.js?v=23";
-import * as rep from "/lifeos/shared/repeat.js?v=23";
-import { pullToRefresh } from "/lifeos/shared/pull.js?v=23";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=24";
+import * as todoist from "/lifeos/shared/todoist.js?v=24";
+import * as gcal from "./calendar.js?v=24";
+import * as speech from "/lifeos/shared/speech.js?v=24";
+import * as hub from "/lifeos/shared/hubtasks.js?v=24";
+import * as rep from "/lifeos/shared/repeat.js?v=24";
+import { pullToRefresh } from "/lifeos/shared/pull.js?v=24";
 
 // ─── Settings ────────────────────────────────────────────────────────
 // The Craft API URL is itself the secret: anyone holding it can write to that
@@ -42,7 +42,11 @@ function apiBase(url) {
   const m = u.match(/^(?:https?:\/\/)?(connect\.craft\.do\/links\/[^/?#\s]+)/i);
   return m ? `https://${m[1]}/api/v1` : u.replace(/\/+$/, "");
 }
-const isConfigured = (id) => isTodoist(id) ? Boolean(settings.todoist?.token) : Boolean(settings.spaces[id]?.url);
+// A space trying lifeOS tasks (switched in connections.) counts as having no
+// connection, though it stays saved.
+const isConfigured = (id) => !hub.inLifeosMode(id) && (isTodoist(id) ? Boolean(settings.todoist?.token) : Boolean(settings.spaces[id]?.url));
+// That switch is kept with the account; fetched once per visit, before the first load.
+let modeSynced = null;
 // A space with no Craft or Todoist connection on this device keeps its tasks
 // in lifeOS (lifeos/shared/hubtasks.js), so every space can always take tasks.
 const inLifeos = (id) => hub.sourceOf(settings, id) === "lifeos";
@@ -506,6 +510,7 @@ async function undatedDocTasks(spaceId) {
 }
 
 async function loadCraftTasks() {
+  await (modeSynced ||= hub.syncMode());
   const spaces = SPACES.filter(s => !isTodoist(s.id) && isConfigured(s.id));
   loadingTasks = true;
   renderCraftTasks();
