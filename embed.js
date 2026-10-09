@@ -1139,8 +1139,8 @@ export async function mount(ctx) {
   });
 
   // ─── Swiping a task ──────────────────────────────────────────────────
-  // Right past the mark ticks it off (with Undo); left moves it to tomorrow,
-  // its time block too. A mostly-vertical drag is left to scroll the page, and
+  // Right past the mark ticks it off (with Undo); left asks which day to move
+  // it to (tomorrow first, the week after, or any date), its time block too. A mostly-vertical drag is left to scroll the page, and
   // a touch starting at the very left edge is left to lifeOS's own handle.
   const SWIPE = 90;
   function swipeable(row, task) {
@@ -1179,20 +1179,42 @@ export async function mount(ctx) {
       if (Math.abs(dx) <= SWIPE) return;
       if (isLocked(task)) { toast(scopeHelp(task.spaceId), "err"); return; }
       if (dx > 0) completeTask(task, row);
-      else swipeToTomorrow(task, row);
+      else openMoveDay(task, row);
     });
     row.addEventListener("pointercancel", () => { x0 = null; if (sideways) clear(); });
     // The tap that ends a swipe isn't also a tap on the task's text or date.
     row.addEventListener("click", (e) => { if (Date.now() - swipedAt < 400) { e.stopPropagation(); e.preventDefault(); } }, true);
   }
 
-  async function swipeToTomorrow(task, row) {
-    const d = new Date(startOfToday());
-    d.setDate(d.getDate() + 1);
-    const date = isoDay(d);
-    if (task.date === date) { toast(`${task.text} is already tomorrow`); return; }
-    await reschedule(task, date, row);
+  const dayDialog = $("move-day");
+  let dayFor = null;
+  function openMoveDay(task, row) {
+    finishEdit?.(true);
+    dayFor = { task, row };
+    $("move-day-task").textContent = task.text;
+    const opts = [];
+    for (let n = 1; n <= 7; n++) {
+      const d = new Date(startOfToday());
+      d.setDate(d.getDate() + n);
+      const weekday = d.toLocaleDateString("en-GB", { weekday: "short" });
+      const label = n === 1 ? `Tomorrow <small>${weekday} ${d.getDate()}</small>` : `${weekday} <small>${d.getDate()} ${d.toLocaleDateString("en-GB", { month: "short" })}</small>`;
+      opts.push(`<button class="prio-opt${task.date === isoDay(d) ? " on" : ""}" value="${isoDay(d)}">${label}</button>`);
+    }
+    $("move-day-opts").innerHTML = opts.join("");
+    const pick = $("move-day-date");
+    pick.value = task.date || "";
+    pick.min = isoDay(startOfToday());
+    pick.onchange = () => { if (pick.value) dayDialog.close(pick.value); };
+    dayDialog.showModal();
   }
+  dayDialog.addEventListener("close", async () => {
+    const { task, row } = dayFor || {}, date = dayDialog.returnValue;
+    dayFor = null;
+    dayDialog.returnValue = "";
+    if (!task || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    if (task.date === date) { toast(`${task.text} is already ${dateText(date).toLowerCase()}`); return; }
+    await reschedule(task, date, row);
+  });
 
   // ─── Moving a task kept in lifeOS to another space ───────────────────
   const spaceDialog = $("space-move");
