@@ -66,10 +66,12 @@ export function connect(clientId, { silent = false } = {}) {
 
 // Called once on load. null when the page wasn't opened by Google, else
 // { ok } or { error }.
-export function takeRedirect() {
-  if (!/(?:^#|&)(?:access_token|error)=/.test(location.hash)) return null;
-  const h = new URLSearchParams(location.hash.slice(1));
-  history.replaceState(null, "", location.pathname + location.search);
+// Inside lifeOS (/lifeos/embed.js) the reply arrives in lifeOS's address and
+// is handed over as `hash`, and lifeOS tidies its own address (tidy: false).
+export function takeRedirect(hash = location.hash, { tidy = true } = {}) {
+  if (!/(?:^#|&)(?:access_token|error)=/.test(hash)) return null;
+  const h = new URLSearchParams(hash.slice(1));
+  if (tidy) history.replaceState(null, "", location.pathname + location.search);
   let expected = null;
   try { expected = sessionStorage.getItem(STATE_KEY); sessionStorage.removeItem(STATE_KEY); } catch { /* none */ }
   if (!expected || h.get("state") !== expected) return { error: "state" };
