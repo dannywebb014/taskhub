@@ -218,6 +218,22 @@ export async function mount(ctx) {
     clearTimeout(parseTimer);
     parseTimer = setTimeout(reparse, 250);
   });
+  // ⌘ Enter (Mac) or Ctrl Enter (Windows) adds what's typed, without waiting
+  // for the pause before it's read. Plain Enter still starts a new line (a new task).
+  if (matchMedia("(hover: hover) and (pointer: fine)").matches) {
+    dictation.placeholder += /Mac/.test(navigator.platform || navigator.userAgent) ? " · ⌘ Enter to add" : " · Ctrl Enter to add";
+  }
+  dictation.addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter" || !(e.metaKey || e.ctrlKey)) return;
+    e.preventDefault();
+    clearTimeout(parseTimer);
+    await chronoReady;
+    reparse();
+    if (sendBtn.hidden || sendBtn.disabled) return;
+    await send();
+    // Keep typing: the next tasks go in the same way.
+    dictation.focus();
+  });
 
   $("clear").addEventListener("click", () => {
     dictation.value = "";
@@ -246,7 +262,8 @@ export async function mount(ctx) {
     toastTimer = setTimeout(() => { t.className = "toast"; }, action ? 6000 : kind === "err" ? 7000 : 3500);
   }
 
-  sendBtn.addEventListener("click", async () => {
+  sendBtn.addEventListener("click", () => send());
+  async function send() {
     stopListening();
     dictation.blur();
     sendBtn.disabled = true;
@@ -343,7 +360,7 @@ export async function mount(ctx) {
     if (timed.length || lit.length) await reload;
     if (lit.length) lightCraftTasks(lit);
     if (timed.length) placeBlocks(timed);
-  });
+  }
 
   // ─── Time blocks ─────────────────────────────────────────────────────
   // A task with a time has a block on the main calendar, made the way
