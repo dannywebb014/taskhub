@@ -1,6 +1,6 @@
 import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=25";
 import * as todoist from "/lifeos/shared/todoist.js?v=25";
-import * as gcal from "./calendar.js?v=25";
+import * as gcal from "./calendar.js?v=26";
 import * as speech from "/lifeos/shared/speech.js?v=25";
 import * as hub from "/lifeos/shared/hubtasks.js?v=25";
 import * as rep from "/lifeos/shared/repeat.js?v=25";
@@ -1497,7 +1497,7 @@ export async function mount(ctx) {
       }
       settings.google = { clientId: id.value.trim() };
       saveSettings(settings);
-      if (!clientId().endsWith(".apps.googleusercontent.com")) {
+      if (clientId() && !clientId().endsWith(".apps.googleusercontent.com")) {
         result.className = "test-result err";
         result.textContent = "Paste the client ID from calendar.’s settings";
         return;
