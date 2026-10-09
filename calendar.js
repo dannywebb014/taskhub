@@ -53,7 +53,8 @@ export function connect(clientId, { silent = false } = {}) {
   const page = sameSiteTop() || window;
   const params = new URLSearchParams({
     client_id: clientId.trim(),
-    redirect_uri: page.location.origin + page.location.pathname,
+    // From inside lifeOS (wherever it is served), back to /lifeos/, the address Google knows.
+    redirect_uri: page.location.origin + (page.document.querySelector('meta[name="lifeos-shell"]') ? "/lifeos/" : page.location.pathname),
     response_type: "token",
     scope: SCOPE,
     include_granted_scopes: "true",
