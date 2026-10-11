@@ -309,6 +309,9 @@
     .test-result.err { color:var(--danger); }
     .dlg-foot { display:flex; justify-content:flex-end; gap:8px; margin-top:6px; }
     .when-fields { display:flex; gap:8px; margin-bottom:14px; }
+    .when-quick { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; margin-bottom:14px; }
+    .when-quick .prio-opt { flex-direction:column; justify-content:center; gap:0; padding:8px 2px; font-size:13.5px; text-align:center; white-space:nowrap; }
+    .when-quick .prio-opt small { font-weight:400; color:var(--muted); white-space:nowrap; font-size:12px; }
     .when-fields > div { flex:1; min-width:0; }
     .when-fields label.f { margin-top:0; }
     .dlg-foot .no-time { margin-right:auto; }
