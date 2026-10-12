@@ -1,10 +1,10 @@
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=26";
-import * as todoist from "/lifeos/shared/todoist.js?v=25";
-import * as gcal from "./calendar.js?v=26";
-import * as speech from "/lifeos/shared/speech.js?v=25";
-import * as hub from "/lifeos/shared/hubtasks.js?v=25";
-import * as rep from "/lifeos/shared/repeat.js?v=25";
-import { pullToRefresh } from "/lifeos/shared/pull.js?v=25";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=27";
+import * as todoist from "/lifeos/shared/todoist.js?v=27";
+import * as gcal from "./calendar.js?v=27";
+import * as speech from "/lifeos/shared/speech.js?v=27";
+import * as hub from "/lifeos/shared/hubtasks.js?v=27";
+import * as rep from "/lifeos/shared/repeat.js?v=27";
+import { pullToRefresh } from "/lifeos/shared/pull.js?v=27";
 import { supabase } from "/lifeos/auth.js";
 
 // ─── Settings ────────────────────────────────────────────────────────
@@ -1115,7 +1115,7 @@ export async function mount(ctx) {
   const rows = new WeakMap();   // task → { sig, el }
   function rowFor(task) {
     const sig = JSON.stringify([task.text, task.priority, task.date, whenText(task), isLate(task), task.spaceId, task.builtin,
-      task.shared, task.where?.label, task.recurring, task.repeatText, isLocked(task)]);
+      task.shared, task.where?.label, task.note?.name, task.recurring, task.repeatText, isLocked(task)]);
     const hit = rows.get(task);
     if (hit && hit.sig === sig) {
       hit.el.classList.toggle("done", Boolean(task.tickedAt));
@@ -1137,7 +1137,8 @@ export async function mount(ctx) {
         <button type="button" class="t-when${isLate(task) ? " late" : ""}${task.date ? "" : " none"}" aria-label="Change the date or time">
           <span class="when-text">${esc(whenText(task))}</span>
         </button>
-        ${task.builtin ? (task.shared ? `<span class="t-doc">shared</span>` : "")
+        ${task.builtin ? (task.note ? `<button class="t-doc t-note" aria-label="From the note ${esc(task.note.name)}, tap to open it"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/></svg><span>${esc(task.note.name)}</span></button>`
+            : task.shared ? `<span class="t-doc">shared</span>` : "")
           : isTodoist(task.spaceId) ? `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><span>${esc(task.where.label)}</span></button>`
           : `<button class="t-doc" aria-label="In ${esc(task.where.label)}, tap to move"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span>${esc(task.where.label)}</span></button>`}
         ${task.recurring ? `<span class="t-rep" title="${esc(task.repeatText || "Repeats")}" aria-label="${esc(task.repeatText || "Repeats")}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>` : ""}
@@ -1152,7 +1153,9 @@ export async function mount(ctx) {
     row.querySelector(".t-text").onclick = () => locked ? toast(scopeHelp(task.spaceId), "err") : editText(task, row);
     swipeable(row, task);
     const doc = row.querySelector("button.t-doc");
-    if (doc) doc.onclick = () => !isTodoist(task.spaceId) && canEditDocs(task.spaceId) === false ? toast(scopeHelp(task.spaceId), "err") : openMove(task);
+    // A task written in a note: its chip opens the note (in lifeOS, or on its own page).
+    if (doc && task.note) doc.onclick = () => window.top.lifeosOpenUrl?.(`/lifeos/notes/#${task.note.id}`) || window.open(`/lifeos/notes/#${task.note.id}`, "_self");
+    else if (doc) doc.onclick = () => !isTodoist(task.spaceId) && canEditDocs(task.spaceId) === false ? toast(scopeHelp(task.spaceId), "err") : openMove(task);
     return row;
   }
 
