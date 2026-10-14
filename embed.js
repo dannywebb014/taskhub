@@ -1,4 +1,4 @@
-import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=27";
+import { parseTasks, SPACES } from "/lifeos/shared/parse.js?v=35";
 import * as todoist from "/lifeos/shared/todoist.js?v=27";
 import * as gcal from "./calendar.js?v=27";
 import * as speech from "/lifeos/shared/speech.js?v=27";
